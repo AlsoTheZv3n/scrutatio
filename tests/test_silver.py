@@ -197,14 +197,55 @@ class TestWriteSilver:
         assert f"signature = '{SIG}'" in delete
 
     @respx.mock
-    def test_failures_are_recorded_with_an_attempt_counter(self, sql: SqlClient) -> None:
+    def test_genuine_failures_are_recorded_with_an_attempt_counter(self, sql: SqlClient) -> None:
         route = respx.post(STATEMENTS_URL).mock(_ok())
 
-        write_silver(sql, [_failure("NCT00000001")], batch="b0", signature=SIG)
+        write_silver(
+            sql,
+            [_failure("NCT00000001", "Model returned schema-invalid JSON")],
+            batch="b0",
+            signature=SIG,
+        )
 
         merge = next(s for s in _statements(route) if "MERGE INTO" in s)
         assert FAILURES_TABLE in merge
         assert "attempts + 1" in merge
+
+    @respx.mock
+    def test_throttled_trials_are_left_pending_not_retired(self, sql: SqlClient) -> None:
+        # A 429 describes the moment, not the trial. Counting it against the
+        # attempt budget permanently removes a trial nothing is wrong with —
+        # measured at three exclusions in the first minute of a real run.
+        route = respx.post(STATEMENTS_URL).mock(_ok())
+
+        write_silver(
+            sql,
+            [_failure("NCT00000001", "Extraction failed after 6 attempts: HTTP 429")],
+            batch="b0",
+            signature=SIG,
+        )
+
+        assert not any(FAILURES_TABLE in s for s in _statements(route))
+
+    @respx.mock
+    def test_a_mixed_batch_records_only_the_genuine_failure(self, sql: SqlClient) -> None:
+        respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
+        route = respx.post(STATEMENTS_URL).mock(_ok())
+
+        write_silver(
+            sql,
+            [
+                _outcome("NCT00000001"),
+                _failure("NCT00000002", "HTTP 429"),
+                _failure("NCT00000003", "schema-invalid JSON"),
+            ],
+            batch="b0",
+            signature=SIG,
+        )
+
+        merge = next(s for s in _statements(route) if "MERGE INTO" in s)
+        assert "NCT00000003" in merge
+        assert "NCT00000002" not in merge
 
     @respx.mock
     def test_a_trial_that_now_succeeds_stops_counting_as_failed(self, sql: SqlClient) -> None:
