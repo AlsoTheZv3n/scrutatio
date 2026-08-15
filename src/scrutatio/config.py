@@ -12,26 +12,35 @@ from typing import Literal
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Chat endpoints measured as available on this workspace (2026-08-15).
-# qwen3-next is the default: it returns `content` as a plain string, splits
-# condition from biomarker correctly, and spends ~143 completion tokens where
-# the gpt-oss models spend 347-460 on reasoning for the same result.
+# Endpoints measured as present on Azure Databricks, West Europe (2026-08-15).
+# The roster is region-specific: qwen3-next-80b and bge-large-en are served on
+# AWS but not in EU regions, while the Claude models are only here. Listing them
+# as a Literal turns a wrong endpoint name into a type error rather than a 404
+# in the middle of a backfill.
+#
+# For bulk extraction, prefer a model in the high-throughput class: the
+# published limits give gpt-oss and qwen35 1,000,000 input / 100,000 output
+# tokens per minute, against 200,000 / 20,000 for the Claude models. At ~1,800
+# output tokens per trial that is the difference between ~55 and ~11 trials per
+# minute — the binding constraint on a full pass.
 ChatEndpoint = Literal[
-    "databricks-qwen3-next-80b-a3b-instruct",
-    "databricks-qwen35-122b-a10b",
-    "databricks-meta-llama-3-3-70b-instruct",
-    "databricks-meta-llama-3-1-8b-instruct",
-    "databricks-llama-4-maverick",
-    "databricks-gemma-3-12b",
+    # High-throughput class
     "databricks-gpt-oss-120b",
     "databricks-gpt-oss-20b",
+    "databricks-qwen35-122b-a10b",
+    "databricks-gemma-3-12b",
+    "databricks-llama-4-maverick",
+    "databricks-meta-llama-3-3-70b-instruct",
+    "databricks-meta-llama-3-1-8b-instruct",
+    # Lower rate limits — for the per-query matching step, not bulk extraction
+    "databricks-claude-opus-5",
+    "databricks-claude-opus-4-8",
 ]
 
-# All three measured at 1024 dimensions. gte is the default over bge because
-# bge-large-en truncates at 512 tokens and eligibility texts average ~705.
+# Both measured at 1024 dimensions. gte has an 8192-token window; eligibility
+# texts average ~705 tokens, so nothing is truncated.
 EmbeddingEndpoint = Literal[
     "databricks-gte-large-en",
-    "databricks-bge-large-en",
     "databricks-qwen3-embedding-0-6b",
 ]
 
@@ -67,8 +76,25 @@ class Settings(BaseSettings):
     )
 
     # --- Models -----------------------------------------------------------
-    chat_endpoint: ChatEndpoint = "databricks-qwen3-next-80b-a3b-instruct"
+    chat_endpoint: ChatEndpoint = "databricks-gpt-oss-120b"
     embedding_endpoint: EmbeddingEndpoint = "databricks-gte-large-en"
+
+    # --- Unity Catalog ----------------------------------------------------
+    # The catalog name is workspace-specific: Databricks Free Edition on AWS
+    # ships a catalog called "workspace", while an Azure serverless workspace
+    # names it after the workspace itself. Hardcoding it breaks on the move.
+    catalog: str = "workspace"
+    schema_name: str = "scrutatio"
+
+    # --- Spend guard ------------------------------------------------------
+    # Azure budgets alert but do not stop anything, and pay-as-you-go has no
+    # hard cap. This is the one ceiling under our own control: bulk runs check
+    # accrued spend before starting and refuse to proceed past it.
+    max_spend_usd: float = Field(
+        default=40.0,
+        gt=0,
+        description="Refuse to start a bulk run once billed usage reaches this figure.",
+    )
 
     # --- ClinicalTrials.gov ----------------------------------------------
     ctgov_base_url: HttpUrl = HttpUrl("https://clinicaltrials.gov/api/v2")

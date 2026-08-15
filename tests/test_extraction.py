@@ -35,7 +35,7 @@ from scrutatio.extraction.client import (
 
 HOST = "https://dbc-00000000-0000.cloud.databricks.com"
 TOKEN = "fake-token-for-tests-only"
-ENDPOINT_URL = f"{HOST}/serving-endpoints/databricks-qwen3-next-80b-a3b-instruct/invocations"
+ENDPOINT_URL = f"{HOST}/serving-endpoints/databricks-gpt-oss-120b/invocations"
 
 RESULT = {
     "criteria": [

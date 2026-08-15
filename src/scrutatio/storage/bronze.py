@@ -19,13 +19,19 @@ import re
 from collections.abc import Iterable
 from typing import Final
 
+from scrutatio.config import get_settings
 from scrutatio.ctgov import Study, last_update_posted, nct_id
 from scrutatio.storage.sql import SqlClient
 
 logger = logging.getLogger(__name__)
 
-CATALOG: Final = "workspace"
-SCHEMA: Final = "scrutatio"
+# Resolved once at import from settings. The catalog name is workspace-specific:
+# Databricks Free Edition on AWS ships a catalog called "workspace", while an
+# Azure serverless workspace names it after the workspace itself. Hardcoding it
+# meant the first statement against the new workspace failed on an unknown
+# catalog rather than doing the work.
+CATALOG: Final = get_settings().catalog
+SCHEMA: Final = get_settings().schema_name
 VOLUME: Final = "landing"
 BRONZE_TABLE: Final = f"{CATALOG}.{SCHEMA}.bronze_studies"
 RUNS_TABLE: Final = f"{CATALOG}.{SCHEMA}.bronze_runs"

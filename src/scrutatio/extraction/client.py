@@ -61,9 +61,12 @@ MIN_MAX_TOKENS: Final = 1000
 MAX_TOKEN_CEILING: Final = 8000
 
 # The output restates every criterion plus its metadata, so it runs longer than
-# the input prose. Measured against real trials, ~2.5x input tokens is enough
-# with headroom.
-_OUTPUT_RATIO: Final = 2.5
+# the input prose. Measured on a real trial: 1,788 output tokens for 1,629 input,
+# a ratio of 1.86. The budget is not just a safety net — the endpoint reserves it
+# against the per-minute output allowance before admitting the request, so padding
+# it costs throughput directly. 2.0 leaves a margin; TruncatedResponseError doubles
+# it for the rare trial that needs more.
+_OUTPUT_RATIO: Final = 2.0
 _CHARS_PER_TOKEN: Final = 4
 
 _RETRY_STATUS: Final = frozenset({429, 500, 502, 503, 504})

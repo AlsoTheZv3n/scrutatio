@@ -1,84 +1,88 @@
 # Scrutatio
 
-Freitext-Patientensituation rein — in Sekunden eine gerankte Liste passender Onkologie-Studien raus, jede mit einem Urteil **pro Eignungskriterium**, Begründung, NCT-Link, Rekrutierungsstatus und Standorten.
+Free-text patient situation in — a ranked list of matching oncology trials out, each with a
+verdict **per eligibility criterion**, a rationale, the NCT link, recruiting status and locations.
 
-> ## ⚠️ Medizinischer Disclaimer
+> ## ⚠️ Medical disclaimer
 >
-> **Dies ist Entscheidungsunterstützung, keine medizinische Beratung.** Die Ausgabe ist eine
-> priorisierte Liste von Studienkandidaten mit Belegen pro Kriterium, gedacht zur Prüfung durch
-> qualifiziertes medizinisches Fachpersonal — kein Eignungsurteil und keine Empfehlung.
+> **This is decision support, not medical advice.** The output is a prioritised list of candidate
+> trials with per-criterion evidence, intended for review by a qualified healthcare professional —
+> not an eligibility determination and not a recommendation.
 >
-> - Eignung ist **immer** mit dem Studienteam oder der behandelnden Onkologin zu verifizieren.
-> - Daten stammen aus ClinicalTrials.gov und **können veraltet sein**; Rekrutierungsstatus und
->   Standorte ändern sich laufend.
-> - Automatisierte Kriterienprüfung ist fehlerbehaftet. Belege sind zum Nachlesen da, nicht zum Vertrauen.
-> - **Keine echten Patientendaten eingeben.** Nur synthetische Vignetten — siehe [Datenschutz](#datenschutz).
+> - Eligibility must **always** be verified with the study team or the treating oncologist.
+> - Data comes from ClinicalTrials.gov and **may be out of date**; recruiting status and locations
+>   change constantly.
+> - Automated criterion checking is error-prone. The evidence is there to be read, not trusted.
+> - **Do not enter real patient data.** Synthetic vignettes only — see [Privacy](#privacy).
 >
-> Nicht CE-markiert. Nicht als Medizinprodukt in Verkehr gebracht. Nicht klinisch validiert.
-> Forschungs- und Demonstrationszweck.
+> Not CE-marked. Not placed on the market as a medical device. Not clinically validated.
+> Research and demonstration purposes.
 
 ---
 
 ## Status
 
-**In Entwicklung.** Bronze steht: 11.200 rekrutierende Onkologie-Studien liegen als Delta-Tabelle
-in Unity Catalog, idempotent nachladbar. Die Extraktion nach Silver läuft gegen echte Studien und
-ist wiederaufnehmbar persistiert. Retrieval, Matching, Evaluation und UI stehen noch aus.
+**In development.** Bronze is done: 11,200 recruiting oncology trials sit in a Delta table in Unity
+Catalog, reloadable idempotently. Extraction into Silver runs against real trials and persists
+resumably. Retrieval, matching, evaluation and the UI are still ahead.
 
-## Das Problem
+## The problem
 
-Patientinnen und Patienten gegen Studienkriterien zu screenen kostet laut NEJM AI bis zu einer
-Stunde pro Fall. Rund 20 % der Studien scheitern an der Rekrutierung; in der Onkologie enrollen
-nur 2–8 % der Erwachsenen. Die Kriterien liegen als Prosa vor — Keyword-Suche auf
-ClinicalTrials.gov findet sie nicht zuverlässig.
+Screening a patient against trial criteria takes up to an hour per case according to NEJM AI. Around
+20% of trials fail on recruitment; in oncology only 2–8% of adults enrol. The criteria are prose —
+keyword search on ClinicalTrials.gov does not find them reliably.
 
-## Architektur
+## Architecture
 
-Medallion auf Databricks Free Edition. Durchgezogen = gebaut, gestrichelt = geplant.
+Medallion on Azure Databricks. Solid = built, dashed = planned.
 
 ```mermaid
 flowchart TB
-    CTG["ClinicalTrials.gov API v2<br/>öffentlich · keine Auth · 11.200 Studien im Scope"]
+    CTG["ClinicalTrials.gov API v2<br/>public · no auth · 11,200 trials in scope"]
 
-    subgraph EXT ["Ausserhalb des Workspace — lokal oder GitHub Actions"]
+    subgraph EXT ["Outside the workspace — laptop or GitHub Actions"]
         direction LR
-        CLIENT["CT.gov-Client<br/>Pydantic aus OpenAPI 3.0.3<br/>Pagination · Retry · Watermark"]
-        RUNNER["Backfill-Runner<br/>Batches · wiederaufnehmbar<br/>CLI: scrutatio backfill"]
-        EXTRACT["Extraktion<br/>Prosa → typisierte Prädikate<br/>erzwungenes JSON-Schema"]
+        CLIENT["CT.gov client<br/>Pydantic from OpenAPI 3.0.3<br/>pagination · retry · watermark"]
+        RUNNER["Backfill runner<br/>batched · resumable<br/>scrutatio backfill"]
+        EXTRACT["Extraction runner<br/>prose to typed predicates<br/>strict JSON schema"]
     end
 
-    subgraph DBX ["Databricks Free Edition — serverless, kein eigener Cloud-Account"]
+    subgraph DBX ["Azure Databricks · West Europe · Premium · Serverless"]
         direction TB
 
-        subgraph UC ["Unity Catalog · workspace.scrutatio"]
+        subgraph UC ["Unity Catalog · scrutatio_workspace.scrutatio"]
             direction LR
-            VOL[("Volume<br/>landing<br/>NDJSON.gz")]
-            BRONZE[("bronze_studies<br/>11.200 Zeilen · 44,6 MB<br/>MERGE auf nct_id · CDF an")]
-            RUNS[("bronze_runs<br/>Resume-Punkt<br/>nur aus vollen Läufen")]
-            SILVER[("silver_criteria<br/>Prädikate pro Studie")]
+            VOL[("Volume: landing<br/>NDJSON.gz")]
+            BRONZE[("bronze_studies<br/>11,200 rows · 45 MB<br/>MERGE on nct_id · CDF on")]
+            RUNS[("bronze_runs<br/>resume point from<br/>completed runs only")]
+            SILVER[("silver_criteria<br/>typed predicates<br/>keyed by signature")]
+            FAILED[("silver_failures<br/>attempt counter")]
             GOLD[("gold_embeddings<br/>1024 dim")]
         end
 
-        FMCHAT["Foundation Model API<br/>qwen3-next-80b<br/>Chat · Structured Output"]
-        FMEMB["Foundation Model API<br/>gte-large-en<br/>Embeddings · 1024 dim"]
-        VS["AI Search<br/>Delta Sync · 1 Endpoint"]
-        MLF["MLflow<br/>Tracking · Eval"]
+        FMCHAT["Foundation Model API<br/>gpt-oss-120b<br/>chat · structured output"]
+        FMEMB["Foundation Model API<br/>gte-large-en<br/>embeddings · 1024 dim"]
+        VS["AI Search<br/>Delta Sync index"]
+        MLF["MLflow<br/>tracking · evaluation"]
         APP["Databricks App<br/>UI + REST"]
+        CLAUDE["Foundation Model API<br/>claude-opus-5<br/>per-query reranking"]
     end
 
-    USER(["Patiententext<br/>synthetische Vignette"])
-    OUT(["Gerankte Studienliste<br/>Urteil + Begründung pro Kriterium"])
+    USER(["Patient text<br/>synthetic vignette"])
+    OUT(["Ranked trial list<br/>verdict + rationale per criterion"])
 
-    CTG -->|"~19 Requests"| CLIENT
+    CTG -->|"~19 requests"| CLIENT
     CLIENT --> RUNNER
-    RUNNER -->|"Upload"| VOL
-    VOL -->|"COPY INTO → MERGE"| BRONZE
-    RUNNER -.->|"Lauf-Status"| RUNS
-    RUNS -.->|"safe_watermark"| RUNNER
+    RUNNER -->|"upload"| VOL
+    VOL -->|"COPY INTO to MERGE"| BRONZE
+    RUNNER -->|"run state"| RUNS
+    RUNS -->|"safe_watermark"| RUNNER
 
     BRONZE --> EXTRACT
-    EXTRACT <-->|"1 Call pro Studie"| FMCHAT
-    EXTRACT -.-> SILVER
+    EXTRACT <-->|"1 call per trial"| FMCHAT
+    EXTRACT -->|"replace per trial"| SILVER
+    EXTRACT -->|"429s, schema errors"| FAILED
+    FAILED -->|"skip exhausted"| EXTRACT
     SILVER -.-> FMEMB
     FMEMB -.-> GOLD
     GOLD -.-> VS
@@ -86,8 +90,8 @@ flowchart TB
     USER -.-> APP
     APP -.-> FMEMB
     APP -.-> VS
-    VS -.->|"Top-K"| APP
-    APP -.->|"Rerank pro Kriterium"| FMCHAT
+    VS -.->|"top-K"| APP
+    APP -.->|"rerank per criterion"| CLAUDE
     APP -.-> OUT
     APP -.-> MLF
     EXTRACT -.-> MLF
@@ -97,85 +101,98 @@ flowchart TB
     classDef ext fill:#1e40af,stroke:#1e3a8a,color:#fff
     classDef io fill:#7c2d12,stroke:#431407,color:#fff
 
-    class CLIENT,RUNNER,EXTRACT,VOL,BRONZE,RUNS,FMCHAT,FMEMB built
-    class SILVER,GOLD,VS,MLF,APP planned
+    class CLIENT,RUNNER,EXTRACT,VOL,BRONZE,RUNS,SILVER,FAILED,FMCHAT built
+    class GOLD,FMEMB,VS,MLF,APP,CLAUDE planned
     class CTG ext
     class USER,OUT io
 ```
 
-**Warum der Ingest ausserhalb läuft:** Free-Edition-Serverless erreicht nur eine
-unveröffentlichte Allowlist an Domains — ob `clinicaltrials.gov` dazugehört, ist offen (Gate
-G1). Der Schreibpfad läuft deshalb komplett über die SQL Statement Execution API, ohne Spark
-und ohne `databricks-connect`. Derselbe Code läuft lokal, in CI oder als Job im Workspace — der
-Ausführungsort ändert nur, wo der Prozess läuft, nicht den Aufbau.
+**Why ingestion runs outside the workspace.** Serverless compute reaches only an unpublished
+allowlist of domains, so whether `clinicaltrials.gov` is reachable from inside is an open question.
+The write path therefore goes entirely through the SQL Statement Execution API — no Spark, no
+`databricks-connect`. The same code runs on a laptop, in CI, or as a workspace job; where it runs
+changes nothing about how it works.
 
-| Ebene | Inhalt | Stand |
+| Layer | Contents | State |
 | --- | --- | --- |
-| **Bronze** | Rohstudien aus CT.gov, idempotent per `MERGE`, inkrementell über `lastUpdatePostDate` | ✅ 11.200 Studien |
-| **Silver** | Eligibility-Prosa → typisierte Prädikate in 20 Kategorien per LLM mit erzwungenem JSON-Schema, wiederaufnehmbar über eine Extraktions-Signatur | ✅ gebaut, Lauf offen |
-| **Gold** | Embeddings über Kriterien und Studien | offen |
-| **Matching** | Patiententext → embed → Top-K → LLM prüft alle Kriterien pro Studie → Ranking | offen |
+| **Bronze** | Raw CT.gov studies, idempotent via `MERGE`, incremental on `lastUpdatePostDate` | ✅ 11,200 trials |
+| **Silver** | Eligibility prose to typed predicates in 20 categories, strict JSON schema, resumable via an extraction signature | ✅ built, full run pending |
+| **Gold** | Embeddings over criteria and trials | planned |
+| **Matching** | Patient text → embed → top-K → LLM checks every criterion per trial → ranking | planned |
 
-Scope: interventionelle, rekrutierende Onkologie-Studien
-(`AREA[ConditionAncestorTerm]Neoplasms`) — **11.200 Studien**, Stand 2026-08-15.
+Scope: interventional, recruiting oncology trials (`AREA[ConditionAncestorTerm]Neoplasms`) —
+**11,200 trials** as of 2026-08-15.
 
 ## Setup
 
-Voraussetzungen: [uv](https://docs.astral.sh/uv/), Python 3.12 (uv holt es bei Bedarf).
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.12 (uv fetches it if needed).
 
 ```bash
 git clone https://github.com/AlsoTheZv3n/scrutatio.git
 cd scrutatio
 uv sync --all-groups
 
-cp .env.example .env    # Databricks-Host und Token eintragen
+cp .env.example .env    # workspace URL, token, catalog name
 ```
 
-Prüfen:
+Verify:
 
 ```bash
 uv run ruff check .
 uv run pytest
 ```
 
-Optional, empfohlen für Mitwirkende:
+## Running the pipeline
 
 ```bash
-uv run pre-commit install
+uv run scrutatio status                  # progress across Bronze and Silver
+uv run scrutatio backfill                # land the trial corpus (~4 min)
+uv run scrutatio backfill --incremental  # only what changed since the last complete run
+uv run scrutatio extract                 # extract criteria; resumes where it left off
+uv run scrutatio extract --limit 200     # or in portions
 ```
 
-## Architekturentscheidungen
+Both runners are resumable by design. `backfill` merges on `nct_id`, so a rerun updates rather than
+duplicates, and only a run that walked the whole scope publishes a resume point. `extract` commits
+every batch before fetching the next and skips trials already extracted under the current signature.
 
-Die wichtigsten Randbedingungen:
+## Design decisions
 
-- **Python 3.12**, nicht neuer — `databricks-connect` verlangt exakt `==3.12.*`, Serverless
-  führt 3.12.3 aus.
-- **Databricks Free Edition**, serverless-only. Kein eigener Cloud-Provider, kein eigener
-  Storage. Eine AI-Search-Einheit, Delta Sync only.
-- **Ein LLM-Call pro Studie** über alle Kriterien, nicht pro Kriterium — besseres Micro-F1
-  bei knapp einer Größenordnung weniger Kosten.
+- **Python 3.12**, not newer — `databricks-connect` requires exactly `==3.12.*` and serverless
+  executes 3.12.3.
+- **Delta writes over the SQL Statement Execution API**, not Spark. Location-independent, and it
+  sidesteps the serverless egress question entirely.
+- **One LLM call per trial** covering all criteria, not one per criterion — better Micro-F1 at close
+  to an order of magnitude fewer tokens.
+- **Extraction signature.** Every Silver row carries a hash of the model endpoint, system prompt and
+  JSON schema. Changing the taxonomy re-queues exactly the affected trials instead of leaving a
+  silently mixed table. This was not hypothetical: growing the taxonomy from 9 to 20 categories
+  invalidated every extraction made before it, and nothing in the data said so.
+- **Concurrency is tuned, not maximised.** The serving endpoint reserves `max_tokens` against the
+  per-minute output allowance *before* admitting a request, so concurrency multiplies the
+  reservation. Measured on Premium: 1–2 workers produced zero 429s, 8 workers failed 6 of 8. The
+  default is 3.
 
-## Grenzen
+## Limits
 
-Bewusst offengelegt, nicht in Fußnoten versteckt:
+Stated plainly rather than buried:
 
-- **End-to-end ist dieses System nicht besser als ein gutes Expertensystem.** In einer
-  Onkologie-Studie (Wong et al., MLHC 2023) schlug ein handgebautes Regelsystem GPT-4 mit
-  93,6 % gegen 76,8 % Recall. Verteidigbare Gewinne liegen auf Retrieval- und Kriterien-Ebene,
-  nicht in der Gesamteignung.
-- **Boolesche Match-Logik ist die Schwachstelle.** Auch wo Entitätserkennung 65–72 F1
-  erreicht, fällt die vollständige Kriterien-Verknüpfung auf ~30 F1.
-- Zeitliche Kriterien, Therapielinien, Laborschwellen und Negation sind dokumentierte
-  Fehlerquellen automatisierter Kriterienprüfung.
-- Ontologie-Normalisierung ist bewusst flach gehalten.
+- **End to end, this system is not better than a good expert system.** In one oncology study (Wong
+  et al., MLHC 2023) a hand-built rule system beat GPT-4 at 93.6% versus 76.8% recall. Defensible
+  gains are at the retrieval and criterion level, not overall eligibility.
+- **Boolean match logic is the weak point.** Even where entity recognition reaches 65–72 F1, full
+  criterion composition drops to around 30 F1.
+- Temporal criteria, therapy lines, lab thresholds and negation are documented failure modes of
+  automated criterion checking.
+- Ontology normalisation is deliberately shallow.
 
-## Datenschutz
+## Privacy
 
-Databricks' Acceptable Use Policy stuft „health information identifiable to a particular
-individual" als Prohibited Data ein. Dieses Projekt verarbeitet daher **ausschließlich
-synthetische Patientenvignetten**. Studiendaten von ClinicalTrials.gov sind Public Domain.
+Databricks' Acceptable Use Policy classifies "health information identifiable to a particular
+individual" as Prohibited Data. This project therefore processes **synthetic patient vignettes
+only**. Trial data from ClinicalTrials.gov is public domain.
 
-## Lizenz
+## License
 
-[Apache-2.0](LICENSE). Studiendaten stammen von ClinicalTrials.gov (Public Domain, NLM).
-Evaluationsdatensätze behalten ihre jeweiligen Lizenzen.
+[Apache-2.0](LICENSE). Trial data from ClinicalTrials.gov (public domain, NLM). Evaluation datasets
+keep their own licences.

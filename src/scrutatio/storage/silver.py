@@ -259,9 +259,26 @@ def _quote_list(values: Iterable[str]) -> str:
     return ", ".join(quoted) if quoted else "''"
 
 
+def _is_throttled(outcome: ExtractionOutcome) -> bool:
+    """True when the trial failed because the endpoint was rate limiting."""
+    return "429" in (outcome.error or "")
+
+
 def _record_failures(sql: SqlClient, outcomes: list[ExtractionOutcome], signature: str) -> None:
-    """Increment the attempt counter for trials that failed this pass."""
-    failed = [o for o in outcomes if not o.ok]
+    """Increment the attempt counter for trials that genuinely failed.
+
+    Throttled trials are deliberately **not** recorded. A 429 says something
+    about the moment, not about the trial: the input is fine and will extract
+    once capacity returns. Counting throttling against the attempt budget
+    retires good trials from the corpus permanently — measured at three
+    exclusions in the first minute of a run, which over a night would have
+    silently removed hundreds of trials that were never examined.
+    """
+    throttled = sum(1 for o in outcomes if not o.ok and _is_throttled(o))
+    if throttled:
+        logger.info("%d trials throttled — left pending, not counted against attempts", throttled)
+
+    failed = [o for o in outcomes if not o.ok and not _is_throttled(o)]
     if not failed:
         return
 

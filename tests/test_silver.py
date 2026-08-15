@@ -83,7 +83,7 @@ class TestExtractionSignature:
     def test_changes_when_the_model_endpoint_changes(self) -> None:
         a = extraction_signature(Settings(_env_file=None))  # type: ignore[call-arg]
         b = extraction_signature(
-            Settings(_env_file=None, chat_endpoint="databricks-gpt-oss-120b")  # type: ignore[call-arg]
+            Settings(_env_file=None, chat_endpoint="databricks-claude-opus-5")  # type: ignore[call-arg]
         )
         assert a != b
 

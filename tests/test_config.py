@@ -43,10 +43,11 @@ class TestDefaults:
         assert "Neoplasms" in DEFAULT_SCOPE_FILTER
         assert "INTERVENTIONAL" in DEFAULT_SCOPE_FILTER
 
-    def test_default_chat_model_returns_plain_string_content(self, clean_env: None) -> None:
-        # gpt-oss models return `content` as an array of typed parts, which
-        # breaks standard OpenAI clients. The default must not be one of them.
-        assert "gpt-oss" not in _settings().chat_endpoint
+    def test_default_chat_model_is_in_the_high_throughput_class(self, clean_env: None) -> None:
+        # Bulk extraction is bounded by output tokens per minute: the gpt-oss,
+        # qwen35 and llama endpoints are published at 100,000 OTPM against
+        # 20,000 for the Claude models — roughly 55 vs 11 trials per minute.
+        assert "claude" not in _settings().chat_endpoint
 
     def test_default_embedding_model_has_the_long_context_window(self, clean_env: None) -> None:
         # bge-large-en truncates at 512 tokens; eligibility texts average ~705.
