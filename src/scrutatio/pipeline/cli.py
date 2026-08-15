@@ -1,0 +1,147 @@
+"""Command line entry point.
+
+`uv run scrutatio --help`
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import UTC, datetime
+
+from scrutatio.ctgov import CtGovClient
+from scrutatio.extraction import EligibilityExtractor
+from scrutatio.pipeline.backfill import run_backfill
+from scrutatio.pipeline.extract import run_extraction
+from scrutatio.storage import (
+    BRONZE_TABLE,
+    SqlClient,
+    bronze_count,
+    bronze_max_update,
+    ensure_silver,
+    ensure_storage,
+    extraction_signature,
+    safe_watermark,
+    silver_stats,
+)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="scrutatio",
+        description="Oncology clinical-trial matching — pipeline commands.",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="log every step")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    backfill = sub.add_parser("backfill", help="land ClinicalTrials.gov studies into Bronze")
+    backfill.add_argument(
+        "--incremental",
+        action="store_true",
+        help="fetch only studies updated since the newest row in Bronze",
+    )
+    backfill.add_argument("--limit", type=int, help="stop after N studies (for smoke runs)")
+    backfill.add_argument("--batch-size", type=int, default=500, help="studies per batch")
+
+    extract = sub.add_parser("extract", help="extract eligibility criteria into Silver")
+    extract.add_argument("--limit", type=int, help="stop after N trials")
+    extract.add_argument("--batch-size", type=int, default=50, help="trials committed per batch")
+    extract.add_argument("--workers", type=int, default=8, help="concurrent extraction calls")
+    extract.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="include trials that already exhausted their attempts",
+    )
+
+    sub.add_parser("status", help="show pipeline progress")
+
+    return parser
+
+
+def _cmd_backfill(args: argparse.Namespace) -> int:
+    run_token = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    with SqlClient() as sql, CtGovClient() as ctgov:
+        result = run_backfill(
+            sql=sql,
+            ctgov=ctgov,
+            incremental=args.incremental,
+            limit=args.limit,
+            batch_size=args.batch_size,
+            run_token=run_token,
+        )
+
+    mode = f"incremental from {result.incremental_from}" if result.incremental_from else "full"
+    print(f"Backfill ({mode})")
+    print(f"  batches written   {result.batches}")
+    print(f"  studies landed    {result.written}")
+    print(f"  rows before/after {result.rows_before} -> {result.rows_after}")
+    print(f"  net new           {result.added}")
+    if not result.complete:
+        print("  NOTE: partial run — watermark not advanced, next incremental starts earlier")
+    return 0
+
+
+def _cmd_extract(args: argparse.Namespace) -> int:
+    run_token = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    with SqlClient() as sql, EligibilityExtractor() as extractor:
+        result = run_extraction(
+            sql=sql,
+            extractor=extractor,
+            limit=args.limit,
+            batch_size=args.batch_size,
+            workers=args.workers,
+            retry_failed=args.retry_failed,
+            run_token=run_token,
+        )
+
+    print("Extraction")
+    print(f"  signature        {result.signature}")
+    print(f"  trials written   {result.trials_written}")
+    print(f"  criteria written {result.criteria_written}")
+    print(f"  succeeded/failed {result.succeeded}/{result.failed}")
+    print(f"  rate limited     {result.rate_limited}")
+    print(f"  still pending    {result.remaining}")
+    if result.quota_exhausted:
+        print("  NOTE: stopped on throttling, not on work — rerun later to continue")
+    return 0
+
+
+def _cmd_status(_: argparse.Namespace) -> int:
+    with SqlClient() as sql:
+        # Status must work on a fresh workspace, before any run has created tables.
+        ensure_storage(sql)
+        ensure_silver(sql)
+        signature = extraction_signature()
+        silver = silver_stats(sql, signature)
+        done = silver["trials"]
+        total = silver["total"] or 1
+        print("Bronze")
+        print(f"  table          {BRONZE_TABLE}")
+        print(f"  rows           {bronze_count(sql)}")
+        print(f"  newest update  {bronze_max_update(sql) or '-'}")
+        print(
+            f"  resume point   {safe_watermark(sql) or '- (no completed run; next pass is full)'}"
+        )
+        print("Silver")
+        print(f"  signature      {signature}")
+        print(f"  trials         {done}/{silver['total']}  ({100 * done / total:.1f}%)")
+        print(f"  criteria       {silver['criteria']}")
+        print(f"  failed         {silver['failed']}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(levelname)s %(message)s",
+    )
+    handlers = {"backfill": _cmd_backfill, "extract": _cmd_extract, "status": _cmd_status}
+    return handlers[args.command](args)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

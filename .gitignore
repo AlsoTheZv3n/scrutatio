@@ -1,0 +1,40 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+
+# MLflow local runs
+mlruns/
+mlartifacts/
+
+# Local data
+data/
+*.parquet
+
+# Editor
+.vscode/
+.idea/
+
+# Internal working notes and design docs — not published
+docs/
