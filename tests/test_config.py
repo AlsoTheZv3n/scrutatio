@@ -56,10 +56,14 @@ class TestDefaults:
         # OpenRouter addresses models as "provider/model"; a bare name 404s.
         assert "/" in _settings().extraction_model
 
-    def test_default_embedding_model_has_the_long_context_window(self, clean_env: None) -> None:
-        # bge-large-en truncates at 512 tokens; eligibility texts measured a mean
-        # of ~835 tokens over 4,000 trials, with p99 well past 3,000.
-        assert "gte" in _settings().embedding_model
+    def test_default_embedding_model_needs_no_remote_code(self, clean_env: None) -> None:
+        # The long-context model (gte-large-en-v1.5) was chosen when whole
+        # eligibility texts were to be embedded — a mean of ~835 tokens against
+        # BGE's 512-token window. We embed *criteria*, which measure ~31 tokens,
+        # so the window stopped being the deciding factor and what remained was
+        # that gte requires trust_remote_code=True: building the index would
+        # execute code fetched from a model repository.
+        assert _settings().embedding_model.startswith("BAAI/bge-")
 
     def test_embedding_dimensions_match_measured_value(self) -> None:
         assert EMBEDDING_DIMENSIONS == 1024

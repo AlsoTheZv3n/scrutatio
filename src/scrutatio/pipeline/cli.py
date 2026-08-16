@@ -62,6 +62,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="include trials that already exhausted their attempts",
     )
 
+    embed = sub.add_parser("embed", help="embed criteria into Gold (local, GPU if available)")
+    embed.add_argument("--limit", type=int, help="stop after N criteria")
+    embed.add_argument("--batch-size", type=int, default=2048, help="criteria per encode call")
+    embed.add_argument("--device", help="force a device, e.g. cpu or cuda")
+
+    search = sub.add_parser("search", help="top-K trials for a free-text patient description")
+    search.add_argument("text", help="patient description (synthetic vignettes only)")
+    search.add_argument("-k", type=int, default=10, help="how many trials to return")
+
     sub.add_parser("status", help="show pipeline progress")
 
     return parser
@@ -127,6 +136,44 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_embed(args: argparse.Namespace) -> int:
+    from scrutatio.embeddings import CriterionEncoder
+    from scrutatio.pipeline.embed import run_embedding
+
+    encoder = CriterionEncoder(device=args.device)
+    with database() as db:
+        result = run_embedding(db=db, encoder=encoder, limit=args.limit, batch_size=args.batch_size)
+
+    print("Embedding")
+    print(f"  signature        {result.signature}")
+    print(f"  model            {result.model}")
+    print(f"  vectors written  {result.written}")
+    print(f"  still pending    {result.remaining}")
+    return 0
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    from scrutatio.embeddings import CriterionEncoder
+    from scrutatio.storage import search_criteria
+
+    encoder = CriterionEncoder()
+    query = encoder.encode_query(args.text)
+    signature = extraction_signature()
+
+    with database() as db:
+        hits = search_criteria(db, query, signature=signature, model=encoder.model_name, k=args.k)
+
+    if not hits:
+        print("No matches — has `scrutatio embed` run for this signature?")
+        return 0
+    for rank, (nct_id, score, ordinal, text) in enumerate(hits, start=1):
+        print(f"{rank:2}. {nct_id}  {score:.3f}")
+        # The matching criterion is the reason, not decoration: it is what makes
+        # the ranking checkable by a human instead of a number to be trusted.
+        print(f"    #{ordinal} {text[:110]}")
+    return 0
+
+
 def _cmd_status(_: argparse.Namespace) -> int:
     with database() as db:
         # Status must work on a fresh database, before any run has created tables.
@@ -153,9 +200,20 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
-        format="%(levelname)s %(message)s",
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
     )
-    handlers = {"backfill": _cmd_backfill, "extract": _cmd_extract, "status": _cmd_status}
+    # httpx logs every request at INFO. Over a full extraction pass that is one
+    # line per trial, which buries the per-batch progress the flag was turned on
+    # for. Timestamps matter more: they are how a stalling run is spotted.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    handlers = {
+        "backfill": _cmd_backfill,
+        "extract": _cmd_extract,
+        "embed": _cmd_embed,
+        "search": _cmd_search,
+        "status": _cmd_status,
+    }
     try:
         return handlers[args.command](args)
     except DatabaseBusyError as exc:

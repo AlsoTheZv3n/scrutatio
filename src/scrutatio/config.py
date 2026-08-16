@@ -18,11 +18,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # structured outputs), so an allow-list would be stale within the week.
 DEFAULT_EXTRACTION_MODEL = "deepseek/deepseek-v4-flash"
 
-# Embeddings run locally — no API, no per-vector cost. gte has an 8192-token
-# window against a measured mean of ~835 tokens per eligibility text, so nothing
-# is truncated. BGE's 512-token window would have forced chunking.
-DEFAULT_EMBEDDING_MODEL = "Alibaba-NLP/gte-large-en-v1.5"
+# Embeddings run locally — no API, no per-vector cost.
+#
+# The original choice was gte-large-en-v1.5 for its 8192-token window, because a
+# whole eligibility text averages ~835 tokens and BGE truncates at 512. That
+# reasoning does not apply here: we embed *criteria*, not whole texts, and a
+# criterion measures ~125 characters — about 31 tokens. The window is 16x more
+# than needed either way, so it stops being a differentiator.
+#
+# BGE wins on what is left: it needs no `trust_remote_code=True`, so building the
+# index does not execute code fetched from a model repository. Same 1024
+# dimensions, so nothing downstream changes.
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
 EMBEDDING_DIMENSIONS = 1024
+
+# BGE is trained with an instruction prefix on the *query* side only; documents
+# are embedded bare. Omitting it costs retrieval quality, and applying it to both
+# sides costs more.
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 # Interventional, recruiting, cancer by MeSH ancestor term. Measured 2026-08-16:
 # 11_200 studies. The looser `query.cond=cancer OR neoplasm` yields 18_821 and
