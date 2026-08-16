@@ -26,6 +26,7 @@ from scrutatio.storage import (
     safe_watermark,
     silver_stats,
 )
+from scrutatio.storage.db import DatabaseBusyError
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -151,7 +152,13 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(message)s",
     )
     handlers = {"backfill": _cmd_backfill, "extract": _cmd_extract, "status": _cmd_status}
-    return handlers[args.command](args)
+    try:
+        return handlers[args.command](args)
+    except DatabaseBusyError as exc:
+        # Expected while another run holds the file; a traceback would suggest a
+        # defect rather than "wait a moment".
+        print(f"Database busy: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover

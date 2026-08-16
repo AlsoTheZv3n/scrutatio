@@ -1,0 +1,39 @@
+# Secrets — must never reach a layer
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# The corpus is a volume, not an image layer (358 MB and rebuildable)
+data/
+*.duckdb
+*.parquet
+
+# Build and tooling artefacts
+.venv/
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Not needed at runtime; tests run in CI, not in the image
+tests/
+docs/
+mlruns/
+mlartifacts/
+
+# VCS and editor
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/

@@ -28,6 +28,21 @@ logger = logging.getLogger(__name__)
 # SQL instead of a recording of an HTTP API.
 IN_MEMORY = ":memory:"
 
+# DuckDB appends this to the (localised) OS error when the file is locked.
+_LOCK_MARKER = "File is already open"
+
+
+class DatabaseBusyError(RuntimeError):
+    """Another process holds the database.
+
+    DuckDB allows a single read-write process and excludes every other
+    connection while it is attached — a read-only connection is refused too,
+    which is measured rather than assumed. That is workable for a batch
+    pipeline, but it means progress cannot be inspected mid-run and anything
+    long-lived that wants to read (a UI) needs an exported snapshot rather than
+    the live file.
+    """
+
 
 def connect(path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
     """Open the database, creating the parent directory if needed.
@@ -40,7 +55,18 @@ def connect(path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
         target.parent.mkdir(parents=True, exist_ok=True)
         target = str(target)
     logger.info("Opening DuckDB at %s", target)
-    return duckdb.connect(target)
+    try:
+        return duckdb.connect(target)
+    except duckdb.IOException as exc:
+        # Match DuckDB's own wording, not the OS error it wraps: that half of the
+        # message is localised and would not match on a non-English system.
+        if _LOCK_MARKER not in str(exc):
+            raise
+        msg = (
+            f"{target} is held by another process — DuckDB allows only one at a time. "
+            f"A backfill or extraction is probably still running; wait for it to finish."
+        )
+        raise DatabaseBusyError(msg) from exc
 
 
 @contextmanager

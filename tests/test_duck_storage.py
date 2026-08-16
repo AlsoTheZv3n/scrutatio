@@ -35,7 +35,7 @@ from scrutatio.storage.bronze import (
     start_run,
     write_bronze,
 )
-from scrutatio.storage.db import IN_MEMORY, connect, database
+from scrutatio.storage.db import IN_MEMORY, DatabaseBusyError, connect, database
 
 
 def _study(nct: str, updated: str | None = "2026-08-14") -> Study:
@@ -67,6 +67,33 @@ class TestConnection:
     def test_in_memory_needs_no_path(self) -> None:
         with database(IN_MEMORY) as conn:
             assert conn.execute("SELECT 1").fetchone() == (1,)
+
+    def test_a_locked_file_reports_who_is_holding_it(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # DuckDB allows one read-write process and refuses every other connection
+        # while it is attached — a read-only one included. Measured, not assumed.
+        def locked(*_: object, **__: object) -> None:
+            raise duckdb.IOException(
+                'IO Error: Cannot open file "x.duckdb": <localised OS text>\n\n'
+                "File is already open in \nD:\\dev\\python.exe (PID 43812)"
+            )
+
+        monkeypatch.setattr(duckdb, "connect", locked)
+        with pytest.raises(DatabaseBusyError, match="only one at a time"):
+            connect(tmp_path / "x.duckdb")
+
+    def test_other_io_errors_are_not_relabelled_as_a_lock(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The OS half of a lock message is localised, so the marker has to be
+        # DuckDB's own wording. A corrupt file must not be reported as "busy".
+        def corrupt(*_: object, **__: object) -> None:
+            raise duckdb.IOException("IO Error: database file is not valid")
+
+        monkeypatch.setattr(duckdb, "connect", corrupt)
+        with pytest.raises(duckdb.IOException, match="not valid"):
+            connect(tmp_path / "x.duckdb")
 
 
 class TestSchemaSetup:

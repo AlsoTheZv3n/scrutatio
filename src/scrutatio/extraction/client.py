@@ -47,34 +47,60 @@ SYSTEM_PROMPT: Final = (
     "the exclusion section with is_exclusion=true. Do not invent criteria that are "
     "not in the text.\n"
     "\n"
-    "Choose `kind` by what is being tested, not by which section it appears in:\n"
+    "Choose `kind` by what is being tested, not by which section it appears in. "
+    "Every category is listed here; pick the closest one.\n"
+    "\n"
+    "What the patient has:\n"
+    "- condition: the disease itself — its diagnosis, histology, subtype or primary site\n"
+    "- stage: disease stage, grade, or extent such as metastatic, locally advanced, resectable\n"
+    "- biomarker: a molecular, genetic or immunohistochemical marker, mutation or expression\n"
+    "- comorbidity: another illness or condition alongside the cancer, including prior malignancy\n"
+    "- infection: HIV, hepatitis, tuberculosis, active infection\n"
+    "\n"
+    "Measurements:\n"
+    "- lab: a numeric laboratory threshold with a value and unit\n"
+    "- organ_function: adequate renal, hepatic, cardiac or marrow function stated qualitatively\n"
+    "- ecog: ECOG, WHO or Karnofsky performance status\n"
+    "- age: a minimum or maximum age\n"
+    "- life_expectancy: a minimum expected survival\n"
+    "- measurable_disease: RECIST-measurable or evaluable lesions\n"
+    "\n"
+    "Treatment history and constraints:\n"
+    "- prior_therapy: a treatment the patient has or has not received before, including lines of\n"
+    "  therapy, prior drug classes, and prior radiotherapy or systemic treatment\n"
+    "- concurrent_therapy: participation in another trial, or use of a drug during this one\n"
+    "- procedure: surgery, biopsy, transplant, radiotherapy as an event the patient underwent\n"
+    "- washout: a required interval since a prior treatment or event ('at least 28 days since')\n"
+    "- allergy: hypersensitivity or intolerance to a substance\n"
+    "\n"
+    "Administrative:\n"
     "- reproductive: pregnancy, lactation, contraception, childbearing potential, fertility\n"
     "- consent: ability or willingness to give informed consent or assent\n"
     "- compliance: willingness to attend visits, adhere to the protocol, be reachable\n"
-    "- procedure: surgery, biopsy, transplant, radiotherapy as an event the patient underwent\n"
-    "- washout: a required interval since a prior treatment or event ('at least 28 days since')\n"
-    "- concurrent_therapy: participation in another trial, or use of a drug during this one\n"
-    "- organ_function: adequate renal, hepatic, cardiac or marrow function stated qualitatively\n"
-    "- lab: a numeric laboratory threshold with a value and unit\n"
-    "- infection: HIV, hepatitis, tuberculosis, active infection\n"
-    "- measurable_disease: RECIST-measurable or evaluable lesions\n"
-    "- life_expectancy: a minimum expected survival\n"
-    "- allergy: hypersensitivity or intolerance to a substance\n"
     "\n"
-    "Use `other` only when no listed kind fits. It is the last resort, not the default."
+    "Use `other` only when no listed kind fits. It is the last resort, not the default. "
+    "A criterion placed in `other` cannot be matched against a patient later, so reaching for "
+    "it is a real loss — if a criterion is about the disease, a marker, a measurement or a past "
+    "treatment, one of the categories above applies."
 )
 
 MIN_MAX_TOKENS: Final = 1000
-MAX_TOKEN_CEILING: Final = 16000
+MAX_TOKEN_CEILING: Final = 24000
 
 # The output restates every criterion plus its metadata, so it runs longer than
 # the input prose. Measured over 4,000 real trials: 26.6 criteria per trial at
 # ~190 output characters each, against a mean input of 3,341 characters.
 #
-# Under-reserving is far more expensive than over-reserving: a truncation
-# discards the whole response and costs a second full call. At a 2.0 ratio a
-# third of trials truncated in one run.
-_OUTPUT_RATIO: Final = 3.0
+# The old value of 3.0 was tuned against Databricks, which reserved `max_tokens`
+# from the per-minute allowance *before* admitting a request — so a generous
+# ceiling cost throughput even when unused. OpenRouter does not pre-reserve, so
+# over-reserving is free and under-reserving still costs an entire second call.
+#
+# 3.0 was also measurably too tight: NCT06999707 (3,327 chars) returned 8,308
+# characters of JSON, needing ~2,518 output tokens against a budget of 2,495. It
+# truncated by 23 tokens and paid for a full retry. 4.5 covers the worst observed
+# expansion (2.5x input characters) with headroom.
+_OUTPUT_RATIO: Final = 4.5
 _CHARS_PER_TOKEN: Final = 4
 
 _RETRY_STATUS: Final = frozenset({429, 500, 502, 503, 504})
