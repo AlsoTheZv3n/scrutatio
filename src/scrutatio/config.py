@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     extraction_model: str = DEFAULT_EXTRACTION_MODEL
     matching_model: str = DEFAULT_EXTRACTION_MODEL
 
+    # Reasoning is waste for structured extraction: the schema already fixes the
+    # shape of the answer, so thinking tokens buy nothing and are billed and
+    # timed like any other output. Measured on two real trials — disabling it cut
+    # output tokens 2.5-3.8x, moved the completion-to-answer ratio from ~3.5 to
+    # ~1.0, and left the criterion count unchanged.
+    #
+    # This is the same diagnosis the Databricks post-mortem reached about
+    # gpt-oss-120b, except here it is a request parameter rather than a reason to
+    # change models. Matching may want it on; extraction does not.
+    extraction_reasoning: bool = False
+
     # --- Local storage ----------------------------------------------------
     # One file. `data/` is gitignored.
     db_path: Path = Path("data/scrutatio.duckdb")

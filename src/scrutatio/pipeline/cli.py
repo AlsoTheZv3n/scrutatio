@@ -118,6 +118,10 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         # >> 1.0 means output tokens were spent on something other than the
         # answer — the reasoning-model failure that cost a previous full run.
         print(f"  reasoning ratio  {usage.reasoning_ratio:.2f}  (near 1.0 is healthy)")
+        if usage.wasted_calls:
+            # Truncated attempts burn a full budget and return nothing. Counted
+            # separately because they are invisible in the criteria totals.
+            print(f"  wasted calls     {usage.wasted_calls}/{usage.calls} (truncated)")
     if result.quota_exhausted:
         print("  NOTE: stopped on throttling, not on work — rerun later to continue")
     return 0

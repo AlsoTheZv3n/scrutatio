@@ -51,6 +51,10 @@ def extraction_signature(settings: Settings | None = None) -> str:
     material = json.dumps(
         {
             "model": cfg.extraction_model,
+            # Not cosmetic: with reasoning on the same model produced 3,355 output
+            # tokens per trial against 1,743 with it off. Anything that changes
+            # what comes out belongs in the hash.
+            "reasoning": cfg.extraction_reasoning,
             "system_prompt": SYSTEM_PROMPT,
             "schema": flatten_schema(ExtractedEligibility),
         },

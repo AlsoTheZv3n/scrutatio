@@ -84,22 +84,37 @@ SYSTEM_PROMPT: Final = (
     "treatment, one of the categories above applies."
 )
 
-MIN_MAX_TOKENS: Final = 1000
-MAX_TOKEN_CEILING: Final = 24000
+MIN_MAX_TOKENS: Final = 2000
+MAX_TOKEN_CEILING: Final = 32000
+
+# A flat allowance for tokens the model emits that are not the answer. With
+# reasoning disabled the measured completion-to-answer ratio is ~1.0, so this is
+# small; it exists because `max_tokens` bounds everything the model writes, not
+# just the JSON, and a truncation discards the whole response.
+#
+# It was briefly 2,000, sized against a model that *was* reasoning. That is the
+# wrong fix for the wrong problem — see the note on budget size below.
+_REASONING_HEADROOM: Final = 500
 
 # The output restates every criterion plus its metadata, so it runs longer than
 # the input prose. Measured over 4,000 real trials: 26.6 criteria per trial at
 # ~190 output characters each, against a mean input of 3,341 characters.
 #
 # The old value of 3.0 was tuned against Databricks, which reserved `max_tokens`
-# from the per-minute allowance *before* admitting a request — so a generous
-# ceiling cost throughput even when unused. OpenRouter does not pre-reserve, so
-# over-reserving is free and under-reserving still costs an entire second call.
+# from the per-minute allowance *before* admitting a request. It was also
+# measurably too tight here: NCT06999707 returned 8,308 characters of JSON,
+# needing ~2,518 output tokens against a budget of 2,495 — truncated by 23
+# tokens, and paid for a full retry.
 #
-# 3.0 was also measurably too tight: NCT06999707 (3,327 chars) returned 8,308
-# characters of JSON, needing ~2,518 output tokens against a budget of 2,495. It
-# truncated by 23 tokens and paid for a full retry. 4.5 covers the worst observed
-# expansion (2.5x input characters) with headroom.
+# **Over-reserving is not free**, which is the opposite of what an earlier
+# version of this comment claimed. OpenRouter does not pre-reserve, so a large
+# ceiling costs nothing directly — but the model expands to fill it. Raising the
+# floor to 4,000 and the allowance to 2,000 nearly doubled output tokens per
+# trial (1,743 to 3,355) across the same 30 trials, for 681 versus 676 criteria.
+# The budget is not a free upper bound; it is an invitation.
+#
+# The real fix was upstream: disabling reasoning, which cut output 2.5-3.8x. 4.5
+# then covers the worst observed answer expansion with room to spare.
 _OUTPUT_RATIO: Final = 4.5
 _CHARS_PER_TOKEN: Final = 4
 
@@ -129,14 +144,18 @@ class TokenUsage:
     """
 
     calls: int = 0
+    wasted_calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     json_chars: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record(self, usage: dict[str, Any] | None, json_chars: int) -> None:
+    def record(
+        self, usage: dict[str, Any] | None, json_chars: int, *, wasted: bool = False
+    ) -> None:
         with self._lock:
             self.calls += 1
+            self.wasted_calls += int(wasted)
             self.json_chars += json_chars
             if usage:
                 self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
@@ -154,8 +173,10 @@ class TokenUsage:
 
 
 def token_budget(eligibility_text: str) -> int:
-    """Output-token ceiling scaled to the length of the input."""
-    estimated = int(len(eligibility_text) / _CHARS_PER_TOKEN * _OUTPUT_RATIO)
+    """Output-token ceiling: the answer scaled to the input, plus a flat
+    allowance for whatever the model emits that is not the answer."""
+    answer = len(eligibility_text) / _CHARS_PER_TOKEN * _OUTPUT_RATIO
+    estimated = int(answer + _REASONING_HEADROOM)
     return max(MIN_MAX_TOKENS, min(estimated, MAX_TOKEN_CEILING))
 
 
@@ -191,6 +212,7 @@ class EligibilityExtractor:
             msg = "OPENROUTER_API_KEY must be set to run extraction"
             raise ValueError(msg)
         self._model = model or self._settings.extraction_model
+        self._reasoning = self._settings.extraction_reasoning
         self._max_tokens = max_tokens
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self._settings.llm_timeout_seconds)
@@ -242,7 +264,7 @@ class EligibilityExtractor:
             return self._attempt(eligibility_text, retry_budget)
 
     def _attempt(self, eligibility_text: str, max_tokens: int) -> ExtractedEligibility:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -252,6 +274,11 @@ class EligibilityExtractor:
             "max_tokens": max_tokens,
             "response_format": response_format(ExtractedEligibility, "eligibility"),
         }
+        if not self._reasoning:
+            # OpenRouter's unified switch. `effort: low` is not a substitute — it
+            # still spent 2.5x the answer in tokens on one trial and truncated on
+            # another.
+            payload["reasoning"] = {"enabled": False}
 
         body = self._post(payload)
 
@@ -263,6 +290,11 @@ class EligibilityExtractor:
             raise ExtractionError(msg) from exc
 
         if choice.get("finish_reason") == "length":
+            # Record before raising: a truncated attempt burns its whole budget
+            # and returns nothing usable. Counting the tokens but not the answer
+            # is what makes the waste visible in `reasoning_ratio` instead of
+            # disappearing from the numbers entirely.
+            self.usage.record(body.get("usage"), 0, wasted=True)
             msg = f"Response hit the {max_tokens}-token ceiling before closing the JSON"
             raise TruncatedResponseError(msg)
 
