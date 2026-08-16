@@ -3,6 +3,7 @@
 from scrutatio.extraction.client import (
     EligibilityExtractor,
     ExtractionError,
+    TokenUsage,
     TruncatedResponseError,
     token_budget,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ExtractionOutcome",
     "RunStats",
     "SchemaTooLargeError",
+    "TokenUsage",
     "TruncatedResponseError",
     "extract_many",
     "flatten_schema",

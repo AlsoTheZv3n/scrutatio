@@ -1,13 +1,9 @@
-"""Delta persistence in Unity Catalog, driven over the SQL REST API."""
+"""Local persistence in a single DuckDB file."""
 
 from scrutatio.storage.bronze import (
     BRONZE_TABLE,
-    CATALOG,
     DEFAULT_BATCH_SIZE,
     RUNS_TABLE,
-    SCHEMA,
-    VOLUME,
-    UnsafeBatchNameError,
     bronze_count,
     bronze_max_update,
     ensure_storage,
@@ -16,6 +12,7 @@ from scrutatio.storage.bronze import (
     start_run,
     write_bronze,
 )
+from scrutatio.storage.db import IN_MEMORY, connect, database
 from scrutatio.storage.silver import (
     FAILURES_TABLE,
     SILVER_TABLE,
@@ -25,22 +22,18 @@ from scrutatio.storage.silver import (
     silver_stats,
     write_silver,
 )
-from scrutatio.storage.sql import SqlClient, SqlError
 
 __all__ = [
     "BRONZE_TABLE",
-    "CATALOG",
     "DEFAULT_BATCH_SIZE",
     "FAILURES_TABLE",
+    "IN_MEMORY",
     "RUNS_TABLE",
-    "SCHEMA",
     "SILVER_TABLE",
-    "VOLUME",
-    "SqlClient",
-    "SqlError",
-    "UnsafeBatchNameError",
     "bronze_count",
     "bronze_max_update",
+    "connect",
+    "database",
     "ensure_silver",
     "ensure_storage",
     "extraction_signature",

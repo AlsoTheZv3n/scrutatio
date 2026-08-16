@@ -1,12 +1,15 @@
-"""Eligibility schema, and the flattening that makes it acceptable to the API.
+"""Eligibility schema, and the flattening that makes it portable across providers.
 
-Databricks Foundation Model API structured outputs reject a JSON Schema that
-contains ``$ref``, ``$defs``, ``anyOf``, ``oneOf``, ``allOf``, ``pattern`` or
-``prefixItems``, and cap the object at 64 keys.
+Pydantic's ``model_json_schema()`` emits ``$defs`` + ``$ref`` for every nested
+model and ``anyOf`` for every ``Optional`` field. Support for those varies by
+provider, and OpenRouter passes the schema straight through to whichever one
+serves the request — so the schema is authored normally and flattened on the way
+out. A flat, closed schema is the subset everything accepts.
 
-Pydantic's ``model_json_schema()`` emits exactly those constructs: ``$defs`` +
-``$ref`` for every nested model, and ``anyOf`` for every ``Optional`` field. So
-the schema is authored normally and flattened on the way out.
+The 64-key ceiling was a Databricks Foundation Model API limit and is no longer
+binding, but it is kept as a cheap guard: exceeding it means the taxonomy grew
+past what a single structured-output call should carry, which is worth failing
+on locally rather than discovering as an opaque 400 mid-run.
 
 Two consequences shape the models below:
 

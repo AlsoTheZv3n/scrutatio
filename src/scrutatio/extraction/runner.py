@@ -30,13 +30,11 @@ logger = logging.getLogger(__name__)
 # httpx.Client is safe to share across threads; the connection pool serialises
 # access. A separate client per worker would multiply TLS handshakes for nothing.
 #
-# Three, not eight. Measured against Azure Databricks Premium (2026-08-15,
-# 8 requests per setting): 1-2 workers produced zero 429s, 4 workers failed
-# 2 of 8, and 8 workers failed 6 of 8. The endpoint reserves `max_tokens`
-# before admitting a request, so concurrency multiplies the reservation and
-# the limit is hit long before the model is busy. Published Enterprise-tier
-# limits do not apply to Premium.
-DEFAULT_WORKERS = 3
+# OpenRouter publishes no concurrency limit for paid accounts and reroutes around
+# provider throttling, so the safe number is unknown until the calibration gate
+# measures it under sustained load. Start low and raise on evidence: the previous
+# platform was tuned *downward* from 8 and lost a night to it.
+DEFAULT_WORKERS = 4
 
 
 @dataclass

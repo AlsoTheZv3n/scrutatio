@@ -26,8 +26,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      # Pinned to 3.12: databricks-connect requires ==3.12.* and Databricks
-      # serverless executes 3.12.3. See docs/adr/0001.
+      # 3.12 is the floor declared in pyproject.toml; uv reads .python-version.
       - name: Set up Python
         run: uv python install
 

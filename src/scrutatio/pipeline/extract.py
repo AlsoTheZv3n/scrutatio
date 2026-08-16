@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from scrutatio.extraction import DEFAULT_WORKERS, EligibilityExtractor, RunStats, extract_many
-from scrutatio.storage import SqlClient
+from scrutatio.extraction import EligibilityExtractor, RunStats, extract_many
 from scrutatio.storage.silver import (
     ensure_silver,
     extraction_signature,
@@ -20,6 +20,9 @@ from scrutatio.storage.silver import (
     silver_stats,
     write_silver,
 )
+
+if TYPE_CHECKING:
+    import duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +51,16 @@ class ExtractionRunResult:
 
 def run_extraction(
     *,
-    sql: SqlClient,
+    db: duckdb.DuckDBPyConnection,
     extractor: EligibilityExtractor,
     limit: int | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    workers: int = DEFAULT_WORKERS,
+    workers: int = 4,
     retry_failed: bool = False,
     run_token: str,
 ) -> ExtractionRunResult:
     """Extract pending trials into Silver, committing batch by batch."""
-    ensure_silver(sql)
+    ensure_silver(db)
     signature = extraction_signature()
     logger.info("Extraction signature %s", signature)
 
@@ -70,13 +73,13 @@ def run_extraction(
         remaining_budget = None if limit is None else limit - trials_written
         take = batch_size if remaining_budget is None else min(batch_size, remaining_budget)
 
-        pending = pending_trials(sql, signature, limit=take, retry_failed=retry_failed)
+        pending = pending_trials(db, signature, limit=take, retry_failed=retry_failed)
         if not pending:
             break
 
         outcomes = list(extract_many(extractor, pending, max_workers=workers, stats=stats))
         rows, trials = write_silver(
-            sql,
+            db,
             outcomes,
             batch=f"silver-{run_token}-{batch_index:04d}",
             signature=signature,
@@ -98,7 +101,7 @@ def run_extraction(
             logger.warning("Batch %d produced nothing under throttling — stopping", batch_index)
             break
 
-    progress = silver_stats(sql, signature)
+    progress = silver_stats(db, signature)
     return ExtractionRunResult(
         signature=signature,
         trials_written=trials_written,

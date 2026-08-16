@@ -3,46 +3,38 @@
 Two properties carry the design: an extraction must be attributable to what
 produced it (the signature), and re-extracting a trial must replace its rows
 rather than merge with them. Everything else follows from those.
+
+These run against a real in-memory DuckDB. The previous versions asserted on the
+text of generated SQL statements, which tested a recording of the storage layer
+rather than the storage layer; here the assertions are about what ends up in the
+tables.
 """
 
 from __future__ import annotations
 
-import gzip
 import json
-from typing import Any
+from collections.abc import Iterator
 
-import httpx
+import duckdb
 import pytest
-import respx
 
 from scrutatio.config import Settings
 from scrutatio.extraction.runner import ExtractionOutcome
 from scrutatio.extraction.schema import Criterion, ExtractedEligibility
+from scrutatio.storage.bronze import BRONZE_TABLE, ensure_storage
+from scrutatio.storage.db import IN_MEMORY, connect
 from scrutatio.storage.silver import (
     FAILURES_TABLE,
     SILVER_TABLE,
-    _quote_list,
-    _sql_string,
-    _to_ndjson,
     ensure_silver,
     extraction_signature,
     pending_trials,
     silver_stats,
     write_silver,
 )
-from scrutatio.storage.sql import SqlClient
 
-HOST = "https://dbc-00000000-0000.cloud.databricks.com"
-TOKEN = "fake-token-for-tests-only"
-STATEMENTS_URL = f"{HOST}/api/2.0/sql/statements"
 SIG = "abc123def4567890"
-
-
-def _ok(rows: list[list[Any]] | None = None) -> httpx.Response:
-    body: dict[str, Any] = {"statement_id": "s1", "status": {"state": "SUCCEEDED"}}
-    if rows is not None:
-        body["result"] = {"data_array": rows}
-    return httpx.Response(200, json=body)
+OTHER_SIG = "0000111122223333"
 
 
 def _outcome(nct: str, *, kinds: list[str] | None = None) -> ExtractionOutcome:
@@ -58,17 +50,32 @@ def _failure(nct: str, error: str = "HTTP 429") -> ExtractionOutcome:
 
 
 @pytest.fixture
-def settings() -> Settings:
-    return Settings(_env_file=None, databricks_host=HOST, databricks_token=TOKEN)  # type: ignore[call-arg]
+def db() -> Iterator[duckdb.DuckDBPyConnection]:
+    conn = connect(IN_MEMORY)
+    ensure_storage(conn)
+    ensure_silver(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
-@pytest.fixture
-def sql(settings: Settings) -> SqlClient:
-    return SqlClient(settings, warehouse_id="wh1")
+def _land_bronze(db: duckdb.DuckDBPyConnection, nct: str, eligibility: str | None) -> None:
+    """Put one study into Bronze with the given eligibility prose."""
+    module = {} if eligibility is None else {"eligibilityCriteria": eligibility}
+    raw = json.dumps({"protocolSection": {"eligibilityModule": module}})
+    db.execute(
+        f"INSERT INTO {BRONZE_TABLE} VALUES (?, NULL, ?, current_timestamp)",  # noqa: S608
+        [nct, raw],
+    )
 
 
-def _statements(route: Any) -> list[str]:
-    return [json.loads(c.request.content)["statement"] for c in route.calls]
+def _silver_rows(db: duckdb.DuckDBPyConnection, signature: str = SIG) -> list[tuple]:
+    return db.execute(
+        f"SELECT nct_id, ordinal, kind, is_exclusion FROM {SILVER_TABLE} "  # noqa: S608
+        "WHERE signature = ? ORDER BY nct_id, ordinal",
+        [signature],
+    ).fetchall()
 
 
 class TestExtractionSignature:
@@ -80,10 +87,10 @@ class TestExtractionSignature:
     def test_is_stable_for_identical_configuration(self) -> None:
         assert extraction_signature() == extraction_signature()
 
-    def test_changes_when_the_model_endpoint_changes(self) -> None:
+    def test_changes_when_the_model_changes(self) -> None:
         a = extraction_signature(Settings(_env_file=None))  # type: ignore[call-arg]
         b = extraction_signature(
-            Settings(_env_file=None, chat_endpoint="databricks-claude-opus-5")  # type: ignore[call-arg]
+            Settings(_env_file=None, extraction_model="openai/gpt-5-nano")  # type: ignore[call-arg]
         )
         assert a != b
 
@@ -91,232 +98,237 @@ class TestExtractionSignature:
         assert len(extraction_signature()) == 16
 
 
-class TestSerialisation:
-    def test_numbers_and_booleans_are_written_as_strings(self) -> None:
-        # COPY INTO infers a bare 0 as bigint, which fails the STRING staging
-        # column with DELTA_FAILED_TO_MERGE_FIELDS. This exact bug aborted a run.
-        payload, _, _ = _to_ndjson([_outcome("NCT00000001")], SIG)
-        record = json.loads(gzip.decompress(payload).decode().strip().split("\n")[0])
-
-        assert record["ordinal"] == "0"
-        assert isinstance(record["ordinal"], str)
-        assert record["is_exclusion"] in {"true", "false"}
-        assert isinstance(record["is_exclusion"], str)
-
-    def test_one_line_per_criterion(self) -> None:
-        payload, rows, trials = _to_ndjson(
-            [_outcome("NCT00000001", kinds=["condition", "lab", "ecog"])], SIG
-        )
-        assert (rows, trials) == (3, 1)
-        assert len(gzip.decompress(payload).decode().strip().split("\n")) == 3
-
-    def test_ordinal_preserves_criterion_order(self) -> None:
-        payload, _, _ = _to_ndjson(
-            [_outcome("NCT00000001", kinds=["condition", "lab", "washout"])], SIG
-        )
-        lines = [json.loads(x) for x in gzip.decompress(payload).decode().strip().split("\n")]
-        assert [x["ordinal"] for x in lines] == ["0", "1", "2"]
-
-    def test_failed_outcomes_contribute_nothing(self) -> None:
-        _, rows, trials = _to_ndjson([_failure("NCT00000001")], SIG)
-        assert (rows, trials) == (0, 0)
-
-    def test_signature_is_stamped_on_every_row(self) -> None:
-        payload, _, _ = _to_ndjson([_outcome("NCT00000001")], SIG)
-        lines = [json.loads(x) for x in gzip.decompress(payload).decode().strip().split("\n")]
-        assert all(x["signature"] == SIG for x in lines)
-
-
 class TestPendingTrials:
-    @respx.mock
-    def test_excludes_trials_already_extracted_under_this_signature(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok([["NCT00000001", "INCLUSION: adult."]]))
+    def test_returns_trials_bronze_has_and_silver_does_not(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        _land_bronze(db, "NCT00000001", "INCLUSION: adult.")
+        assert pending_trials(db, SIG) == [("NCT00000001", "INCLUSION: adult.")]
 
-        result = pending_trials(sql, SIG, limit=10)
+    def test_excludes_trials_already_extracted_under_this_signature(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        _land_bronze(db, "NCT00000001", "text")
+        write_silver(db, [_outcome("NCT00000001")], signature=SIG)
 
-        assert result == [("NCT00000001", "INCLUSION: adult.")]
-        statement = _statements(route)[0]
-        assert "NOT EXISTS" in statement
-        assert SILVER_TABLE in statement
-        assert f"s.signature = '{SIG}'" in statement
+        assert pending_trials(db, SIG) == []
 
-    @respx.mock
-    def test_excludes_trials_that_exhausted_their_attempts(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok([]))
-        pending_trials(sql, SIG, max_attempts=3)
+    def test_a_different_signature_makes_the_trial_pending_again(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        # This is the taxonomy-change behaviour: changing the model, prompt or
+        # schema re-queues exactly the affected work, with no manual bookkeeping.
+        _land_bronze(db, "NCT00000001", "text")
+        write_silver(db, [_outcome("NCT00000001")], signature=SIG)
 
-        statement = _statements(route)[0]
-        assert FAILURES_TABLE in statement
-        assert "f.attempts >= 3" in statement
+        assert pending_trials(db, OTHER_SIG) == [("NCT00000001", "text")]
 
-    @respx.mock
-    def test_retry_failed_drops_the_failure_filter(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok([]))
-        pending_trials(sql, SIG, retry_failed=True)
+    def test_excludes_trials_that_exhausted_their_attempts(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        _land_bronze(db, "NCT00000001", "text")
+        for _ in range(3):
+            write_silver(db, [_failure("NCT00000001", "schema-invalid")], signature=SIG)
 
-        assert FAILURES_TABLE not in _statements(route)[0]
+        assert pending_trials(db, SIG, max_attempts=3) == []
 
-    @respx.mock
-    def test_rows_without_eligibility_text_are_dropped(self, sql: SqlClient) -> None:
-        respx.post(STATEMENTS_URL).mock(_ok([["NCT00000001", None], ["NCT00000002", "text"]]))
-        assert pending_trials(sql, SIG) == [("NCT00000002", "text")]
+    def test_retry_failed_includes_them_again(self, db: duckdb.DuckDBPyConnection) -> None:
+        _land_bronze(db, "NCT00000001", "text")
+        for _ in range(3):
+            write_silver(db, [_failure("NCT00000001", "schema-invalid")], signature=SIG)
 
-    @respx.mock
-    def test_limit_is_int_cast_into_the_statement(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok([]))
-        pending_trials(sql, SIG, limit=25)
-        assert "LIMIT 25" in _statements(route)[0]
+        assert pending_trials(db, SIG, max_attempts=3, retry_failed=True) == [
+            ("NCT00000001", "text")
+        ]
+
+    def test_trials_without_eligibility_text_are_dropped(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        _land_bronze(db, "NCT00000001", None)
+        _land_bronze(db, "NCT00000002", "text")
+
+        assert pending_trials(db, SIG) == [("NCT00000002", "text")]
+
+    def test_limit_bounds_the_result(self, db: duckdb.DuckDBPyConnection) -> None:
+        for i in range(5):
+            _land_bronze(db, f"NCT0000000{i}", "text")
+
+        assert len(pending_trials(db, SIG, limit=2)) == 2
 
 
 class TestWriteSilver:
-    @respx.mock
-    def test_replaces_rather_than_merges(self, sql: SqlClient) -> None:
-        # Criterion ids are model-generated and unstable across runs, so a MERGE
-        # would leave orphaned rows from the previous extraction's shape.
-        respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-
-        rows, trials = write_silver(sql, [_outcome("NCT00000001")], batch="b0", signature=SIG)
-
-        assert (rows, trials) == (2, 1)
-        statements = _statements(route)
-        assert any(s.strip().startswith("DELETE FROM") and SILVER_TABLE in s for s in statements)
-        assert any("INSERT INTO" in s for s in statements)
-        assert not any("MERGE INTO" in s and SILVER_TABLE in s for s in statements)
-
-    @respx.mock
-    def test_deletion_is_scoped_to_this_signature(self, sql: SqlClient) -> None:
-        # Without the signature filter, re-extracting under a new taxonomy would
-        # wipe the previous signature's rows too.
-        respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-
-        write_silver(sql, [_outcome("NCT00000001")], batch="b0", signature=SIG)
-
-        delete = next(s for s in _statements(route) if s.strip().startswith("DELETE FROM"))
-        assert f"signature = '{SIG}'" in delete
-
-    @respx.mock
-    def test_genuine_failures_are_recorded_with_an_attempt_counter(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-
-        write_silver(
-            sql,
-            [_failure("NCT00000001", "Model returned schema-invalid JSON")],
-            batch="b0",
-            signature=SIG,
+    def test_writes_one_row_per_criterion(self, db: duckdb.DuckDBPyConnection) -> None:
+        rows, trials = write_silver(
+            db, [_outcome("NCT00000001", kinds=["condition", "lab", "ecog"])], signature=SIG
         )
 
-        merge = next(s for s in _statements(route) if "MERGE INTO" in s)
-        assert FAILURES_TABLE in merge
-        assert "attempts + 1" in merge
+        assert (rows, trials) == (3, 1)
+        assert len(_silver_rows(db)) == 3
 
-    @respx.mock
-    def test_throttled_trials_are_left_pending_not_retired(self, sql: SqlClient) -> None:
+    def test_ordinal_preserves_criterion_order(self, db: duckdb.DuckDBPyConnection) -> None:
+        write_silver(
+            db, [_outcome("NCT00000001", kinds=["condition", "lab", "washout"])], signature=SIG
+        )
+
+        assert [(r[1], r[2]) for r in _silver_rows(db)] == [
+            (0, "condition"),
+            (1, "lab"),
+            (2, "washout"),
+        ]
+
+    def test_replacing_a_trial_leaves_no_orphan_rows(self, db: duckdb.DuckDBPyConnection) -> None:
+        # Criterion ids are model-generated and unstable across runs, so merging
+        # would leave rows from the previous extraction's shape behind.
+        write_silver(
+            db, [_outcome("NCT00000001", kinds=["condition", "lab", "ecog"])], signature=SIG
+        )
+        write_silver(db, [_outcome("NCT00000001", kinds=["biomarker"])], signature=SIG)
+
+        assert [r[2] for r in _silver_rows(db)] == ["biomarker"]
+
+    def test_replacement_does_not_touch_another_signature(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        # Without the signature filter, re-extracting under a new taxonomy would
+        # wipe the previous signature's rows too.
+        write_silver(db, [_outcome("NCT00000001", kinds=["condition", "lab"])], signature=OTHER_SIG)
+        write_silver(db, [_outcome("NCT00000001", kinds=["biomarker"])], signature=SIG)
+
+        assert len(_silver_rows(db, OTHER_SIG)) == 2
+        assert len(_silver_rows(db, SIG)) == 1
+
+    def test_failed_outcomes_write_no_criteria(self, db: duckdb.DuckDBPyConnection) -> None:
+        assert write_silver(db, [_failure("NCT00000001")], signature=SIG) == (0, 0)
+        assert _silver_rows(db) == []
+
+
+class TestFailureAccounting:
+    def _attempts(self, db: duckdb.DuckDBPyConnection, nct: str) -> int | None:
+        row = db.execute(
+            f"SELECT attempts FROM {FAILURES_TABLE} WHERE nct_id = ? AND signature = ?",  # noqa: S608
+            [nct, SIG],
+        ).fetchone()
+        return row[0] if row else None
+
+    def test_genuine_failures_increment_an_attempt_counter(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        for _ in range(2):
+            write_silver(db, [_failure("NCT00000001", "schema-invalid JSON")], signature=SIG)
+
+        assert self._attempts(db, "NCT00000001") == 2
+
+    def test_throttled_trials_are_left_pending_not_retired(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
         # A 429 describes the moment, not the trial. Counting it against the
         # attempt budget permanently removes a trial nothing is wrong with —
         # measured at three exclusions in the first minute of a real run.
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-
         write_silver(
-            sql,
+            db,
             [_failure("NCT00000001", "Extraction failed after 6 attempts: HTTP 429")],
-            batch="b0",
             signature=SIG,
         )
 
-        assert not any(FAILURES_TABLE in s for s in _statements(route))
+        assert self._attempts(db, "NCT00000001") is None
 
-    @respx.mock
-    def test_a_mixed_batch_records_only_the_genuine_failure(self, sql: SqlClient) -> None:
-        respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-
+    def test_a_mixed_batch_records_only_the_genuine_failure(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
         write_silver(
-            sql,
+            db,
             [
                 _outcome("NCT00000001"),
                 _failure("NCT00000002", "HTTP 429"),
                 _failure("NCT00000003", "schema-invalid JSON"),
             ],
-            batch="b0",
             signature=SIG,
         )
 
-        merge = next(s for s in _statements(route) if "MERGE INTO" in s)
-        assert "NCT00000003" in merge
-        assert "NCT00000002" not in merge
+        assert self._attempts(db, "NCT00000002") is None
+        assert self._attempts(db, "NCT00000003") == 1
 
-    @respx.mock
-    def test_a_trial_that_now_succeeds_stops_counting_as_failed(self, sql: SqlClient) -> None:
-        respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
-        route = respx.post(STATEMENTS_URL).mock(_ok())
+    def test_a_trial_that_now_succeeds_stops_counting_as_failed(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        write_silver(db, [_failure("NCT00000001", "schema-invalid")], signature=SIG)
+        write_silver(db, [_outcome("NCT00000001")], signature=SIG)
 
-        write_silver(sql, [_outcome("NCT00000001")], batch="b0", signature=SIG)
+        assert self._attempts(db, "NCT00000001") is None
 
-        cleanup = [s for s in _statements(route) if FAILURES_TABLE in s and "DELETE" in s]
-        assert cleanup and "NCT00000001" in cleanup[0]
+    def test_error_text_is_truncated(self, db: duckdb.DuckDBPyConnection) -> None:
+        write_silver(db, [_failure("NCT00000001", "e" * 5000)], signature=SIG)
 
-    @respx.mock
-    def test_a_batch_of_only_failures_writes_no_rows(self, sql: SqlClient) -> None:
-        upload = respx.put(url__startswith=f"{HOST}/api/2.0/fs/files/").mock(httpx.Response(204))
-        respx.post(STATEMENTS_URL).mock(_ok())
+        row = db.execute(
+            f"SELECT error FROM {FAILURES_TABLE} WHERE nct_id = ?",  # noqa: S608
+            ["NCT00000001"],
+        ).fetchone()
+        assert row is not None
+        assert len(row[0]) == 400
 
-        assert write_silver(sql, [_failure("NCT00000001")], batch="b0", signature=SIG) == (0, 0)
-        assert upload.call_count == 0
 
+class TestHostileInput:
+    """Error text and criterion prose arrive from an HTTP layer and reach SQL.
 
-class TestQuoting:
-    """Error text comes back from an HTTP layer and lands in a SQL literal."""
+    Values are bound rather than interpolated, so this is now a property of the
+    driver rather than of a quoting helper — but it is exactly the property that
+    a quoting helper used to be responsible for, so it stays tested.
+    """
 
-    def test_single_quotes_are_escaped(self) -> None:
-        assert _sql_string("it's broken") == "'it''s broken'"
+    def test_sql_in_an_error_message_is_stored_verbatim(
+        self, db: duckdb.DuckDBPyConnection
+    ) -> None:
+        hostile = "x'; DROP TABLE silver_criteria; --"
+        write_silver(db, [_failure("NCT00000001", hostile)], signature=SIG)
 
-    def test_injection_attempt_is_neutralised(self) -> None:
-        quoted = _sql_string("x'; DROP TABLE silver_criteria; --")
-        assert quoted.startswith("'") and quoted.endswith("'")
-        assert "''" in quoted
+        row = db.execute(
+            f"SELECT error FROM {FAILURES_TABLE} WHERE nct_id = ?",  # noqa: S608
+            ["NCT00000001"],
+        ).fetchone()
+        assert row is not None and row[0] == hostile
+        # The table it tried to drop is still there.
+        assert db.execute(f"SELECT count(*) FROM {SILVER_TABLE}").fetchone() is not None  # noqa: S608
 
-    def test_long_errors_are_truncated(self) -> None:
-        assert len(_sql_string("e" * 5000)) <= 402
+    def test_sql_in_criterion_text_is_stored_verbatim(self, db: duckdb.DuckDBPyConnection) -> None:
+        hostile = "Patient must not have '); DELETE FROM bronze_studies; --"
+        outcome = ExtractionOutcome(
+            nct_id="NCT00000001",
+            result=ExtractedEligibility(
+                criteria=[
+                    Criterion(criterion_id="c-0", text=hostile, kind="other", is_exclusion=True)
+                ]
+            ),
+        )
+        write_silver(db, [outcome], signature=SIG)
 
-    def test_quote_list_accepts_only_nct_ids(self) -> None:
-        assert _quote_list(["NCT00000001", "'; DROP TABLE x; --"]) == "'NCT00000001'"
-
-    def test_quote_list_on_empty_input_is_still_valid_sql(self) -> None:
-        assert _quote_list([]) == "''"
+        row = db.execute(f"SELECT text FROM {SILVER_TABLE}").fetchone()  # noqa: S608
+        assert row is not None and row[0] == hostile
 
 
 class TestStats:
-    @respx.mock
-    def test_reports_progress_counters(self, sql: SqlClient) -> None:
-        respx.post(STATEMENTS_URL).mock(_ok([[3000, 90000, 12, 11200]]))
-        assert silver_stats(sql, SIG) == {
-            "trials": 3000,
-            "criteria": 90000,
-            "failed": 12,
-            "total": 11200,
+    def test_reports_progress_counters(self, db: duckdb.DuckDBPyConnection) -> None:
+        _land_bronze(db, "NCT00000001", "text")
+        _land_bronze(db, "NCT00000002", "text")
+        _land_bronze(db, "NCT00000003", None)
+        write_silver(
+            db, [_outcome("NCT00000001", kinds=["condition", "lab", "ecog"])], signature=SIG
+        )
+        write_silver(db, [_failure("NCT00000002", "schema-invalid")], signature=SIG)
+
+        assert silver_stats(db, SIG) == {
+            "trials": 1,
+            "criteria": 3,
+            "failed": 1,
+            # NCT00000003 has no eligibility text, so it is not in scope at all.
+            "total": 2,
         }
 
-    @respx.mock
-    def test_empty_result_is_all_zero(self, sql: SqlClient) -> None:
-        respx.post(STATEMENTS_URL).mock(_ok([]))
-        assert silver_stats(sql, SIG)["trials"] == 0
-
-    @respx.mock
-    def test_nulls_are_treated_as_zero(self, sql: SqlClient) -> None:
-        respx.post(STATEMENTS_URL).mock(_ok([[None, None, None, 11200]]))
-        assert silver_stats(sql, SIG) == {
-            "trials": 0,
-            "criteria": 0,
-            "failed": 0,
-            "total": 11200,
-        }
+    def test_an_empty_database_is_all_zero(self, db: duckdb.DuckDBPyConnection) -> None:
+        assert silver_stats(db, SIG) == {"trials": 0, "criteria": 0, "failed": 0, "total": 0}
 
 
 class TestSchemaSetup:
-    @respx.mock
-    def test_ddl_is_idempotent(self, sql: SqlClient) -> None:
-        route = respx.post(STATEMENTS_URL).mock(_ok())
-        ensure_silver(sql)
-        assert all("IF NOT EXISTS" in s for s in _statements(route))
+    def test_ddl_is_idempotent(self, db: duckdb.DuckDBPyConnection) -> None:
+        ensure_silver(db)
+        ensure_silver(db)
+        assert silver_stats(db, SIG)["criteria"] == 0

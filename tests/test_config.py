@@ -1,5 +1,5 @@
 """Config tests, including the security property that matters most:
-a token must never surface in a repr, log line, or traceback.
+an API key must never surface in a repr, log line, or traceback.
 """
 
 from __future__ import annotations
@@ -8,26 +8,30 @@ import pytest
 from pydantic import ValidationError
 
 from scrutatio.config import (
+    DEFAULT_EXTRACTION_MODEL,
     DEFAULT_SCOPE_FILTER,
     EMBEDDING_DIMENSIONS,
     Settings,
     get_settings,
 )
 
-DUMMY_HOST = "https://dbc-00000000-0000.cloud.databricks.com"
-DUMMY_TOKEN = "fake-token-for-tests-only"
+DUMMY_KEY = "fake-key-for-tests-only"
 
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate from the developer's real .env and shell environment."""
     for var in (
-        "DATABRICKS_HOST",
-        "DATABRICKS_TOKEN",
-        "CHAT_ENDPOINT",
-        "EMBEDDING_ENDPOINT",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_BASE_URL",
+        "EXTRACTION_MODEL",
+        "MATCHING_MODEL",
+        "EMBEDDING_MODEL",
+        "DB_PATH",
         "SCOPE_FILTER",
         "PAGE_SIZE",
+        "MAX_SPEND_USD",
+        "EXTRACTION_WORKERS",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -43,15 +47,19 @@ class TestDefaults:
         assert "Neoplasms" in DEFAULT_SCOPE_FILTER
         assert "INTERVENTIONAL" in DEFAULT_SCOPE_FILTER
 
-    def test_default_chat_model_is_in_the_high_throughput_class(self, clean_env: None) -> None:
-        # Bulk extraction is bounded by output tokens per minute: the gpt-oss,
-        # qwen35 and llama endpoints are published at 100,000 OTPM against
-        # 20,000 for the Claude models — roughly 55 vs 11 trials per minute.
-        assert "claude" not in _settings().chat_endpoint
+    def test_extraction_and_matching_default_to_the_same_model(self, clean_env: None) -> None:
+        s = _settings()
+        assert s.extraction_model == DEFAULT_EXTRACTION_MODEL
+        assert s.matching_model == DEFAULT_EXTRACTION_MODEL
+
+    def test_default_model_is_namespaced_for_openrouter(self, clean_env: None) -> None:
+        # OpenRouter addresses models as "provider/model"; a bare name 404s.
+        assert "/" in _settings().extraction_model
 
     def test_default_embedding_model_has_the_long_context_window(self, clean_env: None) -> None:
-        # bge-large-en truncates at 512 tokens; eligibility texts average ~705.
-        assert _settings().embedding_endpoint == "databricks-gte-large-en"
+        # bge-large-en truncates at 512 tokens; eligibility texts measured a mean
+        # of ~835 tokens over 4,000 trials, with p99 well past 3,000.
+        assert "gte" in _settings().embedding_model
 
     def test_embedding_dimensions_match_measured_value(self) -> None:
         assert EMBEDDING_DIMENSIONS == 1024
@@ -59,53 +67,56 @@ class TestDefaults:
     def test_recruiting_only_by_default(self, clean_env: None) -> None:
         assert _settings().recruiting_only is True
 
+    def test_database_is_a_local_file(self, clean_env: None) -> None:
+        assert _settings().db_path.suffix == ".duckdb"
+
     def test_unconfigured_by_default(self, clean_env: None) -> None:
-        assert _settings().databricks_configured is False
+        assert _settings().openrouter_configured is False
 
 
 class TestSecretHandling:
-    def test_token_is_not_exposed_in_repr(self, clean_env: None) -> None:
-        s = _settings(databricks_host=DUMMY_HOST, databricks_token=DUMMY_TOKEN)
-        assert DUMMY_TOKEN not in repr(s)
-        assert DUMMY_TOKEN not in str(s)
+    def test_key_is_not_exposed_in_repr(self, clean_env: None) -> None:
+        s = _settings(openrouter_api_key=DUMMY_KEY)
+        assert DUMMY_KEY not in repr(s)
+        assert DUMMY_KEY not in str(s)
 
-    def test_token_is_not_exposed_in_model_dump(self, clean_env: None) -> None:
-        s = _settings(databricks_host=DUMMY_HOST, databricks_token=DUMMY_TOKEN)
-        assert DUMMY_TOKEN not in str(s.model_dump())
+    def test_key_is_not_exposed_in_model_dump(self, clean_env: None) -> None:
+        s = _settings(openrouter_api_key=DUMMY_KEY)
+        assert DUMMY_KEY not in str(s.model_dump())
 
-    def test_token_is_retrievable_deliberately(self, clean_env: None) -> None:
-        s = _settings(databricks_token=DUMMY_TOKEN)
-        assert s.databricks_token is not None
-        assert s.databricks_token.get_secret_value() == DUMMY_TOKEN
+    def test_key_is_retrievable_deliberately(self, clean_env: None) -> None:
+        s = _settings(openrouter_api_key=DUMMY_KEY)
+        assert s.openrouter_api_key is not None
+        assert s.openrouter_api_key.get_secret_value() == DUMMY_KEY
 
 
 class TestEnvironmentOverride:
     def test_env_vars_are_read(self, clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DATABRICKS_HOST", DUMMY_HOST)
-        monkeypatch.setenv("DATABRICKS_TOKEN", DUMMY_TOKEN)
-        s = _settings()
-        assert s.databricks_configured is True
+        monkeypatch.setenv("OPENROUTER_API_KEY", DUMMY_KEY)
+        assert _settings().openrouter_configured is True
 
     def test_env_var_names_are_case_insensitive(
         self, clean_env: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("databricks_host", DUMMY_HOST)
-        assert _settings().databricks_host is not None
+        monkeypatch.setenv("openrouter_api_key", DUMMY_KEY)
+        assert _settings().openrouter_api_key is not None
+
+    def test_model_can_be_overridden_without_a_code_change(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The calibration gate compares candidates; swapping one must not require
+        # an edit, and it changes the extraction signature on its own.
+        monkeypatch.setenv("EXTRACTION_MODEL", "openai/gpt-5-nano")
+        assert _settings().extraction_model == "openai/gpt-5-nano"
 
 
-class TestServingEndpointUrl:
-    def test_builds_invocation_url(self, clean_env: None) -> None:
-        s = _settings(databricks_host=DUMMY_HOST)
-        url = s.serving_endpoint_url("databricks-gte-large-en")
-        assert url == f"{DUMMY_HOST}/serving-endpoints/databricks-gte-large-en/invocations"
+class TestChatCompletionsUrl:
+    def test_builds_the_openrouter_endpoint(self, clean_env: None) -> None:
+        assert _settings().chat_completions_url.endswith("/chat/completions")
 
-    def test_tolerates_trailing_slash_on_host(self, clean_env: None) -> None:
-        s = _settings(databricks_host=DUMMY_HOST + "/")
-        assert "//serving-endpoints" not in s.serving_endpoint_url("x")
-
-    def test_raises_without_host(self, clean_env: None) -> None:
-        with pytest.raises(ValueError, match="databricks_host"):
-            _settings().serving_endpoint_url("x")
+    def test_tolerates_trailing_slash_on_base_url(self, clean_env: None) -> None:
+        s = _settings(openrouter_base_url="https://openrouter.ai/api/v1/")
+        assert "//chat/completions" not in s.chat_completions_url
 
 
 class TestValidation:
@@ -122,13 +133,20 @@ class TestValidation:
         with pytest.raises(ValidationError):
             _settings(page_size=size)
 
-    def test_unknown_chat_endpoint_is_rejected(self, clean_env: None) -> None:
-        with pytest.raises(ValidationError):
-            _settings(chat_endpoint="gpt-4")
-
     def test_negative_timeout_is_rejected(self, clean_env: None) -> None:
         with pytest.raises(ValidationError):
             _settings(request_timeout_seconds=0)
+
+    def test_spend_ceiling_must_be_positive(self, clean_env: None) -> None:
+        with pytest.raises(ValidationError):
+            _settings(max_spend_usd=0)
+
+    @pytest.mark.parametrize("workers", [0, -1, 65])
+    def test_worker_count_is_bounded(self, clean_env: None, workers: int) -> None:
+        # Concurrency against an undocumented rate limit is the failure mode that
+        # cost a previous run; an accidental 200 must not be reachable by typo.
+        with pytest.raises(ValidationError):
+            _settings(extraction_workers=workers)
 
 
 def test_get_settings_is_cached() -> None:

@@ -10,15 +10,16 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from scrutatio.config import get_settings
 from scrutatio.ctgov import CtGovClient
 from scrutatio.extraction import EligibilityExtractor
 from scrutatio.pipeline.backfill import run_backfill
 from scrutatio.pipeline.extract import run_extraction
 from scrutatio.storage import (
     BRONZE_TABLE,
-    SqlClient,
     bronze_count,
     bronze_max_update,
+    database,
     ensure_silver,
     ensure_storage,
     extraction_signature,
@@ -28,6 +29,7 @@ from scrutatio.storage import (
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    settings = get_settings()
     parser = argparse.ArgumentParser(
         prog="scrutatio",
         description="Oncology clinical-trial matching — pipeline commands.",
@@ -39,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill.add_argument(
         "--incremental",
         action="store_true",
-        help="fetch only studies updated since the newest row in Bronze",
+        help="fetch only studies updated since the last completed run",
     )
     backfill.add_argument("--limit", type=int, help="stop after N studies (for smoke runs)")
     backfill.add_argument("--batch-size", type=int, default=500, help="studies per batch")
@@ -47,7 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
     extract = sub.add_parser("extract", help="extract eligibility criteria into Silver")
     extract.add_argument("--limit", type=int, help="stop after N trials")
     extract.add_argument("--batch-size", type=int, default=100, help="trials committed per batch")
-    extract.add_argument("--workers", type=int, default=3, help="concurrent extraction calls")
+    extract.add_argument(
+        "--workers",
+        type=int,
+        default=settings.extraction_workers,
+        help="concurrent extraction calls",
+    )
     extract.add_argument(
         "--retry-failed",
         action="store_true",
@@ -62,9 +69,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_backfill(args: argparse.Namespace) -> int:
     run_token = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    with SqlClient() as sql, CtGovClient() as ctgov:
+    with database() as db, CtGovClient() as ctgov:
         result = run_backfill(
-            sql=sql,
+            db=db,
             ctgov=ctgov,
             incremental=args.incremental,
             limit=args.limit,
@@ -86,9 +93,9 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
 def _cmd_extract(args: argparse.Namespace) -> int:
     run_token = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    with SqlClient() as sql, EligibilityExtractor() as extractor:
+    with database() as db, EligibilityExtractor() as extractor:
         result = run_extraction(
-            sql=sql,
+            db=db,
             extractor=extractor,
             limit=args.limit,
             batch_size=args.batch_size,
@@ -96,6 +103,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
             retry_failed=args.retry_failed,
             run_token=run_token,
         )
+        usage = extractor.usage
 
     print("Extraction")
     print(f"  signature        {result.signature}")
@@ -104,27 +112,30 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     print(f"  succeeded/failed {result.succeeded}/{result.failed}")
     print(f"  rate limited     {result.rate_limited}")
     print(f"  still pending    {result.remaining}")
+    if usage.calls:
+        print(f"  tokens in/out    {usage.prompt_tokens}/{usage.completion_tokens}")
+        # >> 1.0 means output tokens were spent on something other than the
+        # answer — the reasoning-model failure that cost a previous full run.
+        print(f"  reasoning ratio  {usage.reasoning_ratio:.2f}  (near 1.0 is healthy)")
     if result.quota_exhausted:
         print("  NOTE: stopped on throttling, not on work — rerun later to continue")
     return 0
 
 
 def _cmd_status(_: argparse.Namespace) -> int:
-    with SqlClient() as sql:
-        # Status must work on a fresh workspace, before any run has created tables.
-        ensure_storage(sql)
-        ensure_silver(sql)
+    with database() as db:
+        # Status must work on a fresh database, before any run has created tables.
+        ensure_storage(db)
+        ensure_silver(db)
         signature = extraction_signature()
-        silver = silver_stats(sql, signature)
+        silver = silver_stats(db, signature)
         done = silver["trials"]
         total = silver["total"] or 1
         print("Bronze")
         print(f"  table          {BRONZE_TABLE}")
-        print(f"  rows           {bronze_count(sql)}")
-        print(f"  newest update  {bronze_max_update(sql) or '-'}")
-        print(
-            f"  resume point   {safe_watermark(sql) or '- (no completed run; next pass is full)'}"
-        )
+        print(f"  rows           {bronze_count(db)}")
+        print(f"  newest update  {bronze_max_update(db) or '-'}")
+        print(f"  resume point   {safe_watermark(db) or '- (no completed run; next pass is full)'}")
         print("Silver")
         print(f"  signature      {signature}")
         print(f"  trials         {done}/{silver['total']}  ({100 * done / total:.1f}%)")

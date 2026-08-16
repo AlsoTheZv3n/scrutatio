@@ -55,7 +55,7 @@ class TestLoop:
     def test_stops_when_nothing_is_pending(
         self, extractor: MagicMock, patched: dict[str, MagicMock]
     ) -> None:
-        result = _run(sql=MagicMock(), extractor=extractor)
+        result = _run(db=MagicMock(), extractor=extractor)
 
         assert result.trials_written == 0
         assert patched["write_silver"].call_count == 0
@@ -63,7 +63,7 @@ class TestLoop:
     def test_storage_is_ensured_before_any_work(
         self, extractor: MagicMock, patched: dict[str, MagicMock]
     ) -> None:
-        _run(sql=MagicMock(), extractor=extractor)
+        _run(db=MagicMock(), extractor=extractor)
         patched["ensure_silver"].assert_called_once()
 
     def test_commits_each_batch_before_fetching_the_next(
@@ -81,7 +81,7 @@ class TestLoop:
             lambda _e, items, **_k: iter([_outcome(n) for n, _ in items]),
         )
 
-        result = _run(sql=MagicMock(), extractor=extractor, batch_size=1)
+        result = _run(db=MagicMock(), extractor=extractor, batch_size=1)
 
         assert result.trials_written == 2
         assert patched["write_silver"].call_count == 2
@@ -100,7 +100,7 @@ class TestLoop:
             lambda _e, items, **_k: iter([_outcome(n) for n, _ in items]),
         )
 
-        _run(sql=MagicMock(), extractor=extractor, batch_size=1)
+        _run(db=MagicMock(), extractor=extractor, batch_size=1)
 
         names = [c.kwargs["batch"] for c in patched["write_silver"].call_args_list]
         assert len(set(names)) == len(names)
@@ -115,7 +115,7 @@ class TestLoop:
             lambda _e, items, **_k: iter([_outcome(n) for n, _ in items]),
         )
 
-        result = _run(sql=MagicMock(), extractor=extractor, limit=3, batch_size=10)
+        result = _run(db=MagicMock(), extractor=extractor, limit=3, batch_size=10)
 
         assert result.trials_written == 3
         # The final page request must never exceed the remaining budget.
@@ -138,7 +138,7 @@ class TestThrottling:
 
         monkeypatch.setattr("scrutatio.pipeline.extract.extract_many", throttled)
 
-        result = _run(sql=MagicMock(), extractor=extractor, batch_size=1)
+        result = _run(db=MagicMock(), extractor=extractor, batch_size=1)
 
         assert patched["write_silver"].call_count == 1
         assert result.rate_limited == 1
@@ -152,7 +152,7 @@ class TestThrottling:
             "scrutatio.pipeline.extract.extract_many", lambda _e, _i, **_k: iter([])
         )
 
-        result = _run(sql=MagicMock(), extractor=extractor, batch_size=1)
+        result = _run(db=MagicMock(), extractor=extractor, batch_size=1)
         assert result.rate_limited == 0
 
 
@@ -166,7 +166,7 @@ class TestResultReporting:
             "failed": 3,
             "total": 11200,
         }
-        assert _run(sql=MagicMock(), extractor=extractor).remaining == 7200
+        assert _run(db=MagicMock(), extractor=extractor).remaining == 7200
 
     def test_quota_exhausted_needs_work_left_and_throttling(self) -> None:
         stopped = ExtractionRunResult(

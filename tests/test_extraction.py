@@ -33,9 +33,8 @@ from scrutatio.extraction.client import (
     _message_text,
 )
 
-HOST = "https://dbc-00000000-0000.cloud.databricks.com"
 TOKEN = "fake-token-for-tests-only"
-ENDPOINT_URL = f"{HOST}/serving-endpoints/databricks-gpt-oss-120b/invocations"
+ENDPOINT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 RESULT = {
     "criteria": [
@@ -59,8 +58,7 @@ RESULT = {
 def settings() -> Settings:
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
-        databricks_host=HOST,
-        databricks_token=TOKEN,
+        openrouter_api_key=TOKEN,
         max_retries=2,
     )
 
@@ -379,7 +377,7 @@ class TestRetries:
 class TestConfiguration:
     def test_refuses_to_start_without_credentials(self) -> None:
         bare = Settings(_env_file=None)  # type: ignore[call-arg]
-        with pytest.raises(ValueError, match="DATABRICKS_HOST"):
+        with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
             EligibilityExtractor(bare)
 
     def test_injected_client_is_not_closed(self, settings: Settings) -> None:

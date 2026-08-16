@@ -4,22 +4,27 @@ version = "0.1.0"
 description = "Oncology clinical-trial matching: free-text patient situation in, ranked trials with per-criterion reasoning out."
 readme = "README.md"
 license = { file = "LICENSE" }
-# Pinned to 3.12: databricks-connect declares Requires-Python ==3.12.* for every
-# supported release, and Databricks serverless executes 3.12.3. See docs/adr/0001.
-requires-python = "==3.12.*"
+# The hard ==3.12.* pin existed because databricks-connect declares that range and
+# Databricks serverless executed 3.12.3. Both reasons are gone; 3.12 stays the floor
+# because nothing in the codebase needs newer syntax.
+requires-python = ">=3.12"
 
 dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "httpx>=0.27",
+    "duckdb>=1.1",
 ]
 
 [project.scripts]
 scrutatio = "scrutatio.pipeline.cli:main"
 
 [project.optional-dependencies]
-databricks = [
-    "databricks-sdk>=0.38",
+# Pulls torch; kept out of the default install so CI stays fast and offline.
+embeddings = [
+    "sentence-transformers>=3.0",
+]
+tracking = [
     "mlflow>=3.0",
 ]
 

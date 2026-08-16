@@ -1,21 +1,20 @@
 """Silver layer: eligibility prose turned into typed predicates.
 
-Resumability is the design centre, not an add-on. A full pass over 11,200
-trials cannot complete in one sitting under the Free Edition quota, so the run
-has to survive being stopped and restarted repeatedly without redoing work or
-silently skipping trials.
+Resumability is the design centre, not an add-on. A full pass over 11,200 trials
+runs against an external API, so it has to survive being stopped and restarted
+without redoing work or silently skipping trials.
 
 That requires knowing *what* an extraction was produced by. The taxonomy change
 on 2026-08-15 — nine criterion kinds to twenty — invalidated every extraction
 made before it, and nothing in the data said so. Every row therefore carries an
-**extraction signature**: a hash of the model endpoint, the system prompt and
-the JSON schema. Change any of them and the affected trials become pending
-again automatically, instead of leaving a silently mixed table.
+**extraction signature**: a hash of the model, the system prompt and the JSON
+schema. Change any of them and the affected trials become pending again
+automatically, instead of leaving a silently mixed table. It is also what keeps
+rows produced on different platforms from ever mixing.
 """
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import logging
@@ -25,23 +24,17 @@ from typing import TYPE_CHECKING, Final
 from scrutatio.config import Settings, get_settings
 from scrutatio.extraction.client import SYSTEM_PROMPT
 from scrutatio.extraction.schema import ExtractedEligibility, flatten_schema
-from scrutatio.storage.bronze import (
-    BRONZE_TABLE,
-    CATALOG,
-    SCHEMA,
-    VOLUME,
-    _validate_batch,
-)
-from scrutatio.storage.sql import SqlClient
+from scrutatio.storage.bronze import BRONZE_TABLE
 
 if TYPE_CHECKING:
+    import duckdb
+
     from scrutatio.extraction.runner import ExtractionOutcome
 
 logger = logging.getLogger(__name__)
 
-SILVER_TABLE: Final = f"{CATALOG}.{SCHEMA}.silver_criteria"
-FAILURES_TABLE: Final = f"{CATALOG}.{SCHEMA}.silver_failures"
-_STAGING_TABLE: Final = f"{CATALOG}.{SCHEMA}._silver_staging"
+SILVER_TABLE: Final = "silver_criteria"
+FAILURES_TABLE: Final = "silver_failures"
 
 ELIGIBILITY_PATH: Final = "$.protocolSection.eligibilityModule.eligibilityCriteria"
 
@@ -49,15 +42,15 @@ ELIGIBILITY_PATH: Final = "$.protocolSection.eligibilityModule.eligibilityCriter
 def extraction_signature(settings: Settings | None = None) -> str:
     """Short hash identifying what produced an extraction.
 
-    Covers the model endpoint, the system prompt and the JSON schema — the three
-    inputs that change what comes out. Rows carrying a different signature are
-    treated as absent, so a prompt or taxonomy change re-queues exactly the
+    Covers the model, the system prompt and the JSON schema — the three inputs
+    that change what comes out. Rows carrying a different signature are treated
+    as absent, so a prompt, model or taxonomy change re-queues exactly the
     affected work with no manual bookkeeping.
     """
     cfg = settings or get_settings()
     material = json.dumps(
         {
-            "endpoint": cfg.chat_endpoint,
+            "model": cfg.extraction_model,
             "system_prompt": SYSTEM_PROMPT,
             "schema": flatten_schema(ExtractedEligibility),
         },
@@ -67,42 +60,41 @@ def extraction_signature(settings: Settings | None = None) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
-def ensure_silver(sql: SqlClient) -> None:
+def ensure_silver(db: duckdb.DuckDBPyConnection) -> None:
     """Create the Silver and failure tables if they do not exist."""
-    sql.execute(
+    db.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {SILVER_TABLE} (
-            nct_id STRING NOT NULL,
-            signature STRING NOT NULL,
-            ordinal INT NOT NULL,
-            criterion_id STRING,
-            text STRING NOT NULL,
-            kind STRING NOT NULL,
+            nct_id VARCHAR NOT NULL,
+            signature VARCHAR NOT NULL,
+            ordinal INTEGER NOT NULL,
+            criterion_id VARCHAR,
+            text VARCHAR NOT NULL,
+            kind VARCHAR NOT NULL,
             is_exclusion BOOLEAN NOT NULL,
-            extracted_at TIMESTAMP NOT NULL
+            extracted_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (nct_id, signature, ordinal)
         )
-        USING DELTA
-        TBLPROPERTIES (delta.enableChangeDataFeed = true)
         """
     )
     # Failures are recorded rather than retried forever: a trial that fails on
     # every pass would otherwise stall the run at the same place each restart.
-    sql.execute(
+    db.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {FAILURES_TABLE} (
-            nct_id STRING NOT NULL,
-            signature STRING NOT NULL,
-            error STRING,
-            attempts INT NOT NULL,
-            last_failed_at TIMESTAMP NOT NULL
+            nct_id VARCHAR NOT NULL,
+            signature VARCHAR NOT NULL,
+            error VARCHAR,
+            attempts INTEGER NOT NULL,
+            last_failed_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (nct_id, signature)
         )
-        USING DELTA
         """
     )
 
 
 def pending_trials(
-    sql: SqlClient,
+    db: duckdb.DuckDBPyConnection,
     signature: str,
     *,
     limit: int | None = None,
@@ -116,147 +108,89 @@ def pending_trials(
     ``retry_failed`` is set, so a restart makes forward progress instead of
     re-attempting the same broken inputs.
     """
-    # S608: `signature` is a hex digest from extraction_signature(); the numeric
-    # bounds are int-cast. No caller-supplied text reaches the statement.
-    failure_clause = (
-        ""
-        if retry_failed
-        else f"""
+    params: list[object] = [ELIGIBILITY_PATH, ELIGIBILITY_PATH, signature]
+    failure_clause = ""
+    if not retry_failed:
+        failure_clause = f"""
         AND NOT EXISTS (
             SELECT 1 FROM {FAILURES_TABLE} f
-            WHERE f.nct_id = b.nct_id
-              AND f.signature = '{signature}'
-              AND f.attempts >= {int(max_attempts)}
+            WHERE f.nct_id = b.nct_id AND f.signature = ? AND f.attempts >= ?
         )
-        """  # noqa: S608
-    )
-    rows = sql.execute(
+        """  # noqa: S608 - table names are module constants
+        params += [signature, int(max_attempts)]
+
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(int(limit))
+
+    rows = db.execute(
         f"""
-        SELECT b.nct_id, get_json_object(b.raw, '{ELIGIBILITY_PATH}') AS eligibility
+        SELECT b.nct_id, json_extract_string(b.raw, ?) AS eligibility
         FROM {BRONZE_TABLE} b
-        WHERE get_json_object(b.raw, '{ELIGIBILITY_PATH}') IS NOT NULL
+        WHERE json_extract_string(b.raw, ?) IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM {SILVER_TABLE} s
-              WHERE s.nct_id = b.nct_id AND s.signature = '{signature}'
+              WHERE s.nct_id = b.nct_id AND s.signature = ?
           )
           {failure_clause}
         ORDER BY b.nct_id
-        {f"LIMIT {int(limit)}" if limit else ""}
-        """  # noqa: S608 - signature is a hex digest, limits are int-cast
-    )
+        {limit_clause}
+        """,  # noqa: S608
+        params,
+    ).fetchall()
     return [(str(r[0]), str(r[1])) for r in rows if r[1]]
 
 
-def _to_ndjson(outcomes: Iterable[ExtractionOutcome], signature: str) -> tuple[bytes, int, int]:
-    """Serialise successful outcomes. Returns (payload, criteria rows, trials)."""
-    lines: list[str] = []
-    trials = 0
-    for outcome in outcomes:
-        if not outcome.ok or outcome.result is None:
-            continue
-        trials += 1
-        for ordinal, criterion in enumerate(outcome.result.criteria):
-            lines.append(
-                json.dumps(
-                    {
-                        "nct_id": outcome.nct_id,
-                        "signature": signature,
-                        # Numbers and booleans are written as JSON *strings* so
-                        # COPY INTO infers every staging column as STRING. A raw
-                        # `0` is inferred as bigint and fails the STRING staging
-                        # column with DELTA_FAILED_TO_MERGE_FIELDS. Casting
-                        # happens on the way into the typed target table.
-                        "ordinal": str(ordinal),
-                        "criterion_id": criterion.criterion_id,
-                        "text": criterion.text,
-                        "kind": criterion.kind,
-                        "is_exclusion": str(criterion.is_exclusion).lower(),
-                    },
-                    ensure_ascii=False,
-                )
-            )
-    payload = gzip.compress(("\n".join(lines) + "\n").encode("utf-8"))
-    return payload, len(lines), trials
-
-
 def write_silver(
-    sql: SqlClient,
+    db: duckdb.DuckDBPyConnection,
     outcomes: Iterable[ExtractionOutcome],
     *,
-    batch: str,
+    batch: str = "-",
     signature: str,
 ) -> tuple[int, int]:
     """Land one batch of extractions. Returns ``(criteria_rows, trials)``.
 
     Re-extracting a trial replaces its rows rather than merging them: criterion
-    ids are model-generated and not stable across runs, so a MERGE would leave
+    ids are model-generated and not stable across runs, so a merge would leave
     orphaned rows from the previous shape.
     """
-    _validate_batch(batch)
     materialised = list(outcomes)
+    _record_failures(db, materialised, signature)
 
-    _record_failures(sql, materialised, signature)
-
-    payload, rows, trials = _to_ndjson(materialised, signature)
-    if trials == 0:
+    succeeded = [o for o in materialised if o.ok and o.result is not None]
+    if not succeeded:
         return 0, 0
 
-    volume_path = f"{CATALOG}/{SCHEMA}/{VOLUME}/{batch}.ndjson.gz"
-    sql.upload_file(volume_path, payload)
+    rows = [
+        (o.nct_id, signature, ordinal, c.criterion_id, c.text, c.kind, c.is_exclusion)
+        for o in succeeded
+        for ordinal, c in enumerate(o.result.criteria)  # type: ignore[union-attr]
+    ]
 
-    sql.execute(f"DROP TABLE IF EXISTS {_STAGING_TABLE}")
-    sql.execute(
-        f"""
-        CREATE TABLE {_STAGING_TABLE} (
-            nct_id STRING, signature STRING, ordinal STRING, criterion_id STRING,
-            text STRING, kind STRING, is_exclusion STRING
-        ) USING DELTA
-        """
+    # Replace per trial, scoped to this signature.
+    db.executemany(
+        f"DELETE FROM {SILVER_TABLE} WHERE signature = ? AND nct_id = ?",  # noqa: S608
+        [(signature, o.nct_id) for o in succeeded],
     )
-    sql.execute(
-        f"""
-        COPY INTO {_STAGING_TABLE}
-        FROM '/Volumes/{CATALOG}/{SCHEMA}/{VOLUME}/{batch}.ndjson.gz'
-        FILEFORMAT = JSON
-        FORMAT_OPTIONS ('multiLine' = 'false', 'compression' = 'gzip')
-        COPY_OPTIONS ('force' = 'true')
-        """
-    )
-    # Replace-per-trial, scoped to this batch and signature.
-    sql.execute(
-        f"""
-        DELETE FROM {SILVER_TABLE}
-        WHERE signature = '{signature}'
-          AND nct_id IN (SELECT DISTINCT nct_id FROM {_STAGING_TABLE})
-        """  # noqa: S608
-    )
-    sql.execute(
-        f"""
-        INSERT INTO {SILVER_TABLE}
-        SELECT nct_id, signature, CAST(ordinal AS INT), criterion_id, text, kind,
-               CAST(is_exclusion AS BOOLEAN), current_timestamp()
-        FROM {_STAGING_TABLE}
-        """  # noqa: S608
-    )
-    sql.execute(f"DROP TABLE IF EXISTS {_STAGING_TABLE}")
+    if rows:
+        db.executemany(
+            f"""
+            INSERT INTO {SILVER_TABLE}
+            (nct_id, signature, ordinal, criterion_id, text, kind, is_exclusion, extracted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, current_timestamp)
+            """,  # noqa: S608
+            rows,
+        )
 
     # A trial that now succeeded must stop counting as failed.
-    sql.execute(
-        f"""
-        DELETE FROM {FAILURES_TABLE}
-        WHERE signature = '{signature}'
-          AND nct_id IN ({_quote_list(o.nct_id for o in materialised if o.ok)})
-        """  # noqa: S608
+    db.executemany(
+        f"DELETE FROM {FAILURES_TABLE} WHERE signature = ? AND nct_id = ?",  # noqa: S608
+        [(signature, o.nct_id) for o in succeeded],
     )
 
-    logger.info("Landed %d criteria from %d trials (batch %s)", rows, trials, batch)
-    return rows, trials
-
-
-def _quote_list(values: Iterable[str]) -> str:
-    """Quote NCT ids for an IN clause. Ids are validated by the generated model."""
-    quoted = [f"'{v}'" for v in values if v.replace("NCT", "").isdigit()]
-    return ", ".join(quoted) if quoted else "''"
+    logger.info("Landed %d criteria from %d trials (batch %s)", len(rows), len(succeeded), batch)
+    return len(rows), len(succeeded)
 
 
 def _is_throttled(outcome: ExtractionOutcome) -> bool:
@@ -264,7 +198,9 @@ def _is_throttled(outcome: ExtractionOutcome) -> bool:
     return "429" in (outcome.error or "")
 
 
-def _record_failures(sql: SqlClient, outcomes: list[ExtractionOutcome], signature: str) -> None:
+def _record_failures(
+    db: duckdb.DuckDBPyConnection, outcomes: list[ExtractionOutcome], signature: str
+) -> None:
     """Increment the attempt counter for trials that genuinely failed.
 
     Throttled trials are deliberately **not** recorded. A 429 says something
@@ -282,44 +218,34 @@ def _record_failures(sql: SqlClient, outcomes: list[ExtractionOutcome], signatur
     if not failed:
         return
 
-    values = ", ".join(
-        f"('{o.nct_id}', '{signature}', {_sql_string(o.error or 'unknown')})" for o in failed
-    )
-    sql.execute(
+    db.executemany(
         f"""
-        MERGE INTO {FAILURES_TABLE} AS target
-        USING (SELECT * FROM VALUES {values} AS t(nct_id, signature, error)) AS source
-        ON target.nct_id = source.nct_id AND target.signature = source.signature
-        WHEN MATCHED THEN UPDATE SET
-            target.attempts = target.attempts + 1,
-            target.error = source.error,
-            target.last_failed_at = current_timestamp()
-        WHEN NOT MATCHED THEN INSERT (nct_id, signature, error, attempts, last_failed_at)
-        VALUES (source.nct_id, source.signature, source.error, 1, current_timestamp())
-        """  # noqa: S608
+        INSERT INTO {FAILURES_TABLE} (nct_id, signature, error, attempts, last_failed_at)
+        VALUES (?, ?, ?, 1, current_timestamp)
+        ON CONFLICT (nct_id, signature) DO UPDATE SET
+            attempts = {FAILURES_TABLE}.attempts + 1,
+            error = excluded.error,
+            last_failed_at = excluded.last_failed_at
+        """,  # noqa: S608
+        [(o.nct_id, signature, (o.error or "unknown")[:400]) for o in failed],
     )
     logger.warning("Recorded %d extraction failures", len(failed))
 
 
-def _sql_string(value: str) -> str:
-    """Quote a string literal, escaping embedded single quotes."""
-    escaped = value.replace("'", "''")[:400]
-    return f"'{escaped}'"
-
-
-def silver_stats(sql: SqlClient, signature: str) -> dict[str, int]:
+def silver_stats(db: duckdb.DuckDBPyConnection, signature: str) -> dict[str, int]:
     """Progress counters for the current signature."""
-    rows = sql.execute(
+    row = db.execute(
         f"""
         SELECT
-            (SELECT count(DISTINCT nct_id) FROM {SILVER_TABLE} WHERE signature = '{signature}'),
-            (SELECT count(*) FROM {SILVER_TABLE} WHERE signature = '{signature}'),
-            (SELECT count(*) FROM {FAILURES_TABLE} WHERE signature = '{signature}'),
+            (SELECT count(DISTINCT nct_id) FROM {SILVER_TABLE} WHERE signature = ?),
+            (SELECT count(*) FROM {SILVER_TABLE} WHERE signature = ?),
+            (SELECT count(*) FROM {FAILURES_TABLE} WHERE signature = ?),
             (SELECT count(*) FROM {BRONZE_TABLE}
-             WHERE get_json_object(raw, '{ELIGIBILITY_PATH}') IS NOT NULL)
-        """  # noqa: S608
-    )
-    if not rows:
+             WHERE json_extract_string(raw, ?) IS NOT NULL)
+        """,  # noqa: S608
+        [signature, signature, signature, ELIGIBILITY_PATH],
+    ).fetchone()
+    if not row:
         return {"trials": 0, "criteria": 0, "failed": 0, "total": 0}
-    trials, criteria, failed, total = (int(v or 0) for v in rows[0])
+    trials, criteria, failed, total = (int(v or 0) for v in row)
     return {"trials": trials, "criteria": criteria, "failed": failed, "total": total}
