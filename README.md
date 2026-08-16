@@ -22,9 +22,15 @@ verdict **per eligibility criterion**, a rationale, the NCT link, recruiting sta
 
 ## Status
 
-**In development.** Bronze is done: 11,200 recruiting oncology trials sit in a Delta table in Unity
-Catalog, reloadable idempotently. Extraction into Silver runs against real trials and persists
-resumably. Retrieval, matching, evaluation and the UI are still ahead.
+**In development.** Bronze is done: 11,200 recruiting oncology trials, reloadable idempotently in
+about four minutes. Extraction into Silver works and persists resumably — 11,053 criteria were
+extracted from 364 trials before the platform was changed.
+
+**The bulk extraction run is unsolved and the storage backend is being reconsidered.** Databricks
+serves the corpus fine, but its Foundation Model API throughput did not support a one-time pass over
+11,200 trials: Free Edition managed roughly 550 extractions per day and an Azure Premium workspace
+48 per hour, against a corpus needing 11,200. Measurements and the post-mortem are in the internal
+runbook. Retrieval, matching, evaluation and the UI are still ahead.
 
 ## The problem
 

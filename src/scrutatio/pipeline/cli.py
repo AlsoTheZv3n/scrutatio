@@ -46,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     extract = sub.add_parser("extract", help="extract eligibility criteria into Silver")
     extract.add_argument("--limit", type=int, help="stop after N trials")
-    extract.add_argument("--batch-size", type=int, default=50, help="trials committed per batch")
+    extract.add_argument("--batch-size", type=int, default=100, help="trials committed per batch")
     extract.add_argument("--workers", type=int, default=3, help="concurrent extraction calls")
     extract.add_argument(
         "--retry-failed",

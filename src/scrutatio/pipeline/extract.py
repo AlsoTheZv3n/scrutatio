@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Small enough that an interrupted run loses little, large enough that the
 # per-batch SQL overhead stays a rounding error next to the LLM calls.
-DEFAULT_BATCH_SIZE = 50
+DEFAULT_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
