@@ -1,14 +1,13 @@
 """Concurrent extraction over many trials.
 
-Serial extraction was measured at ~27s for a criteria-heavy trial, which puts a
-full 11,200-study pass at roughly 84 hours. Concurrency is therefore not an
-optimisation but a precondition — and since the Free Edition rate limits are
-undocumented, the runner has to discover them at runtime rather than assume a
-number.
+Concurrency is a precondition, not an optimisation: a criteria-heavy trial takes
+tens of seconds, and 11,200 of them in sequence is measured in days. OpenRouter
+publishes no concurrency limit for paid accounts, so the runner reports what it
+actually hit — successes, failures, and how often the endpoint pushed back with
+429 — because that telemetry is the only available answer to "how fast may we
+go".
 
-It therefore reports what it hit: successes, failures, and how often the
-endpoint pushed back with 429. That telemetry is the answer to "what is the
-quota", which no Databricks page states.
+Sustained measurement, 16 workers: 895 trials/hour, zero 429s over 505 calls.
 """
 
 from __future__ import annotations
@@ -103,6 +102,16 @@ def extract_many(
             tracker.record(ok=False, throttled=throttled)
             logger.warning("Extraction failed for %s: %s", nct_id, str(exc)[:160])
             return ExtractionOutcome(nct_id=nct_id, result=None, error=str(exc)[:500])
+        except Exception as exc:
+            # One trial must never end the run. This is not defensive padding:
+            # a JSONDecodeError from a malformed response body propagated out of
+            # a worker, through future.result(), and terminated a pass that was
+            # three batches deep. Anything unforeseen belongs in the failure
+            # table alongside the foreseen kinds, not in a traceback.
+            tracker.record(ok=False, throttled=False)
+            logger.exception("Unexpected error extracting %s", nct_id)
+            detail = f"{type(exc).__name__}: {exc}"
+            return ExtractionOutcome(nct_id=nct_id, result=None, error=detail[:500])
         tracker.record(ok=True, throttled=False)
         return ExtractionOutcome(nct_id=nct_id, result=result)
 

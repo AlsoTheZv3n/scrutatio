@@ -8,6 +8,7 @@ or one that burns its remaining attempts against a closed door.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -204,3 +205,37 @@ class TestResultReporting:
             remaining=9000,
         )
         assert broken.quota_exhausted is False
+
+
+class TestResilience:
+    """One trial must never end the run.
+
+    A JSONDecodeError from a malformed response body escaped a worker, passed
+    through future.result(), and killed a pass that was three batches in. Batch
+    commits meant nothing was lost, but 10,000 trials of remaining work stopped.
+    """
+
+    def test_an_unexpected_exception_becomes_a_failed_outcome(self) -> None:
+        from scrutatio.extraction.runner import extract_many
+
+        class Exploding:
+            def extract(self, text: str) -> object:
+                if "boom" in text:
+                    raise ValueError("malformed response body")
+                return SimpleNamespace(criteria=[])
+
+        outcomes = list(
+            extract_many(
+                Exploding(),  # type: ignore[arg-type]
+                [("NCT00000001", "fine"), ("NCT00000002", "boom"), ("NCT00000003", "fine")],
+                max_workers=1,
+            )
+        )
+
+        assert len(outcomes) == 3
+        by_id = {o.nct_id: o for o in outcomes}
+        assert by_id["NCT00000002"].ok is False
+        assert "ValueError" in (by_id["NCT00000002"].error or "")
+        # The trials either side of the explosion still produced results.
+        assert by_id["NCT00000001"].ok is True
+        assert by_id["NCT00000003"].ok is True

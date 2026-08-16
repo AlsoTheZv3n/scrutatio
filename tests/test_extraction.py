@@ -389,3 +389,46 @@ class TestConfiguration:
     def test_criterion_model_round_trips(self) -> None:
         c = Criterion(criterion_id="inc-1", text="x", kind="lab", is_exclusion=False)
         assert Criterion.model_validate(c.model_dump()) == c
+
+
+class TestMalformedBody:
+    """OpenRouter returns 200 with a body that is not (entirely) JSON.
+
+    It emits SSE-style keep-alive comments while an upstream provider is slow,
+    even on non-streaming requests. `response.json()` raises on them, and the
+    resulting JSONDecodeError killed a run three batches deep.
+    """
+
+    def test_a_clean_body_parses(self) -> None:
+        from scrutatio.extraction.client import _parse_body
+
+        response = httpx.Response(200, json={"ok": True})
+        assert _parse_body(response) == {"ok": True}
+
+    def test_keep_alive_padding_before_the_body_is_discarded(self) -> None:
+        from scrutatio.extraction.client import _parse_body
+
+        padding = ": OPENROUTER PROCESSING\n" * 40
+        response = httpx.Response(200, text=padding + '{"ok": true}')
+        assert _parse_body(response) == {"ok": True}
+
+    def test_an_unparseable_body_reports_what_it_saw(self) -> None:
+        from scrutatio.extraction.client import ExtractionError, _parse_body
+
+        response = httpx.Response(200, text="<html>502 Bad Gateway</html>")
+        with pytest.raises(ExtractionError, match="502 Bad Gateway"):
+            _parse_body(response)
+
+    def test_a_malformed_body_does_not_escape_as_a_json_error(
+        self, settings: Settings, no_sleep: None
+    ) -> None:
+        # The whole point: it must arrive as an ExtractionError so the runner
+        # records it and keeps going, rather than unwinding the run.
+        import respx
+
+        from scrutatio.extraction.client import ExtractionError
+
+        with respx.mock:
+            respx.post(ENDPOINT_URL).mock(httpx.Response(200, text="not json at all"))
+            with EligibilityExtractor(settings) as ex, pytest.raises(ExtractionError):
+                ex.extract("INCLUSION: adult.")

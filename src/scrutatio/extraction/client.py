@@ -180,6 +180,35 @@ def token_budget(eligibility_text: str) -> int:
     return max(MIN_MAX_TOKENS, min(estimated, MAX_TOKEN_CEILING))
 
 
+def _parse_body(response: httpx.Response) -> dict[str, Any]:
+    """Parse a 200 response, tolerating keep-alive padding.
+
+    OpenRouter emits SSE-style comment lines while an upstream provider is slow,
+    even on non-streaming requests. They arrive ahead of the JSON body and are
+    not themselves valid JSON, so a bare ``response.json()`` raises on an
+    otherwise perfectly good answer. Observed in the wild at line 255 of a 1,397
+    character body — and it killed a run that was three batches in, because a
+    ``JSONDecodeError`` is not an ``ExtractionError`` and nothing caught it.
+    """
+    try:
+        return response.json()  # type: ignore[no-any-return]
+    except json.JSONDecodeError:
+        text = response.text
+        start = text.find("{")
+        if start > 0:
+            try:
+                parsed = json.loads(text[start:])
+            except json.JSONDecodeError:
+                pass
+            else:
+                logger.warning("Discarded %d bytes of padding before the JSON body", start)
+                return parsed  # type: ignore[no-any-return]
+        # Log the head verbatim: the next occurrence should be diagnosable
+        # without reproducing it.
+        msg = f"Response body was not JSON. First 200 bytes: {text[:200]!r}"
+        raise ExtractionError(msg) from None
+
+
 def _message_text(message: dict[str, Any]) -> str:
     """Pull the assistant text out of either response shape."""
     content = message.get("content")
@@ -319,7 +348,7 @@ class EligibilityExtractor:
                 last = str(exc)
             else:
                 if response.status_code == httpx.codes.OK:
-                    return response.json()
+                    return _parse_body(response)
                 if response.status_code not in _RETRY_STATUS:
                     msg = f"OpenRouter returned {response.status_code}: {response.text[:300]}"
                     raise ExtractionError(msg)
