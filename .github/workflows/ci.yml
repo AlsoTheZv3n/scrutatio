@@ -72,11 +72,18 @@ jobs:
       # 2 MiB, not pre-commit's 500 KB default: uv.lock is legitimately 733 KB.
       - name: Refuse oversized tracked files
         run: |
+          # `if`, not `[ … ] && printf`. GitHub runs this under `bash -e`, and a
+          # trailing && test that is false makes the loop — and therefore the
+          # command substitution — exit non-zero, so the step failed precisely
+          # when nothing was oversized. Verified locally under `bash -e` this
+          # time; the first version was only ever run in a shell without it.
           limit=2097152
           oversized=$(git ls-files | while read -r f; do
             [ -f "$f" ] || continue
             size=$(wc -c <"$f")
-            [ "$size" -gt "$limit" ] && printf '  %s (%s bytes)\n' "$f" "$size"
+            if [ "$size" -gt "$limit" ]; then
+              printf '  %s (%s bytes)\n' "$f" "$size"
+            fi
           done)
           if [ -n "$oversized" ]; then
             printf 'Tracked files over 2 MiB:\n%s\n' "$oversized"
