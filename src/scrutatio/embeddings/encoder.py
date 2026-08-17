@@ -83,18 +83,24 @@ class CriterionEncoder:
             return "cpu"
         return "cuda" if torch.cuda.is_available() else "cpu"
 
-    def encode_criteria(self, texts: Sequence[str], *, batch_size: int = 128) -> list[list[float]]:
-        """Encode criterion text — the document side, no prefix."""
-        if not texts:
-            return []
-        vectors = self.model.encode(
+    def encode_criteria(self, texts: Sequence[str], *, batch_size: int = 128) -> Any:
+        """Encode criterion text — the document side, no prefix.
+
+        Returns the numpy array as produced, not a list of lists. Converting
+        1,024 floats per row into Python objects only to hand them straight to a
+        bulk loader was pure cost.
+        """
+        if len(texts) == 0:
+            import numpy as np
+
+            return np.empty((0, EMBEDDING_DIMENSIONS), dtype=np.float32)
+        return self.model.encode(
             list(texts),
             batch_size=batch_size,
             normalize_embeddings=True,
             show_progress_bar=False,
             convert_to_numpy=True,
         )
-        return [v.tolist() for v in vectors]
 
     def encode_query(self, text: str) -> list[float]:
         """Encode a patient description — the query side, with the BGE prefix."""

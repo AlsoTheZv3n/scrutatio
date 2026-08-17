@@ -14,6 +14,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "httpx>=0.27",
     "duckdb>=1.1",
+    # Bulk-loading vectors through Arrow rather than executemany: profiled at
+    # 95% of the embedding wall clock before, ~1% after.
+    "pyarrow>=17",
+    "numpy>=1.26",
 ]
 
 [project.scripts]
@@ -23,6 +27,10 @@ scrutatio = "scrutatio.pipeline.cli:main"
 # Pulls torch; kept out of the default install so CI stays fast and offline.
 embeddings = [
     "sentence-transformers>=3.0",
+    # Named explicitly even though sentence-transformers pulls it: [tool.uv.sources]
+    # below only applies to direct dependencies, and without this entry uv resolves
+    # torch from PyPI — which on Windows means the CPU build.
+    "torch>=2.13",
 ]
 tracking = [
     "mlflow>=3.0",
@@ -106,3 +114,20 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+
+# ---------------------------------------------------------------------------
+# PyPI ships CPU-only torch on Windows, and `uv sync` silently reverts a
+# manually installed CUDA build to it. Measured consequence: embedding 351,745
+# criteria takes ~22 hours on CPU against minutes on the GPU, so the difference
+# is not a preference. Declaring the index makes the CUDA wheel the thing that
+# gets installed and survives a sync.
+#
+# Scoped to Windows because that is the machine this runs on; CI installs
+# neither (the `embeddings` extra is excluded there) so it never resolves this.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]

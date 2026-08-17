@@ -66,4 +66,9 @@ class TestEmptyInput:
     def test_encoding_nothing_does_not_load_the_model(self) -> None:
         # Loading BGE is 1.3 GB and several seconds; an empty batch must not pay
         # for it. This also keeps the run loop's final empty iteration cheap.
-        assert CriterionEncoder().encode_criteria([]) == []
+        #
+        # The return is a correctly-shaped empty array rather than `[]`: the
+        # bulk writer stacks it with numpy, and an untyped empty list would only
+        # fail one layer further down.
+        empty = CriterionEncoder().encode_criteria([])
+        assert empty.shape == (0, EMBEDDING_DIMENSIONS)
