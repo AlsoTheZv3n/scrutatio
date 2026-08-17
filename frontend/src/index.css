@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+
+/* The palette below is the one that was already here — kept, not replaced.
+   Tailwind v4 has no config file: `@theme` is where tokens become utilities, and
+   pointing them at these variables means `bg-surface` and `text-ink` follow the
+   existing light/dark switch instead of introducing a second, competing one. */
+
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --bg-raised: #faf9fb;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+  --accent: #aa3bff;
+  --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-border: rgba(170, 59, 255, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+
+  /* Verdict colours. Deliberately not red/green alone: roughly 8% of men have a
+     red-green deficiency, so every verdict also carries a distinct glyph and
+     label in the markup. Colour is the accent, never the message. */
+  --met: #0f7b3f;
+  --met-bg: rgba(15, 123, 63, 0.1);
+  --not-met: #b3261e;
+  --not-met-bg: rgba(179, 38, 30, 0.1);
+  --unclear: #8a6d1f;
+  --unclear-bg: rgba(138, 109, 31, 0.1);
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 17px/150% var(--sans);
+  letter-spacing: 0.18px;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --bg-raised: #1c1e26;
+    --border: #2e303a;
+    --code-bg: #1f2028;
+    --accent: #c084fc;
+    --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-border: rgba(192, 132, 252, 0.5);
+    --shadow:
+      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+
+    --met: #4ade80;
+    --met-bg: rgba(74, 222, 128, 0.12);
+    --not-met: #f87171;
+    --not-met-bg: rgba(248, 113, 113, 0.12);
+    --unclear: #fbbf24;
+    --unclear-bg: rgba(251, 191, 36, 0.12);
+  }
+}
+
+@theme inline {
+  --color-ink: var(--text);
+  --color-ink-strong: var(--text-h);
+  --color-surface: var(--bg);
+  --color-raised: var(--bg-raised);
+  --color-line: var(--border);
+  --color-code: var(--code-bg);
+  --color-accent: var(--accent);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-line: var(--accent-border);
+
+  --color-met: var(--met);
+  --color-met-bg: var(--met-bg);
+  --color-not-met: var(--not-met);
+  --color-not-met-bg: var(--not-met-bg);
+  --color-unclear: var(--unclear);
+  --color-unclear-bg: var(--unclear-bg);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+}
+
+body {
+  margin: 0;
+}
+
+/* Was `width: 1126px; text-align: center`. Centred text is right for a landing
+   page and wrong for a table of 31 criteria per trial, and a fixed width fights
+   the corpus explorer. The layout sets its own bounds per page instead. */
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text-h);
+  font-weight: 500;
+  margin: 0;
+}

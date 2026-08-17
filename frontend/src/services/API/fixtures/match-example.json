@@ -1,0 +1,783 @@
+{
+  "query": "58-year-old woman, EGFR exon 19 deletion NSCLC stage IV, progression on osimertinib for 3 months, ECOG 1, irradiated brain metastases stable, creatinine clearance 65 mL/min, no prior chemotherapy.",
+  "generated_at": "2026-08-17T08:16:14.354664Z",
+  "model": "deepseek/deepseek-v4-flash",
+  "disclaimer": "Decision support, not medical advice. This is a prioritised list of candidate trials with per-criterion evidence for review by a qualified healthcare professional — not an eligibility determination. Eligibility must always be verified with the study team. Data comes from ClinicalTrials.gov and may be out of date. Do not enter real patient data.",
+  "trials": [
+    {
+      "nct_id": "NCT05624996",
+      "title": "Testing the Addition of High Dose, Targeted Radiation to the Usual Treatment for Locally-Advanced Inoperable Non-Small Cell Lung Cancer",
+      "phase": "PHASE3",
+      "overall_status": "RECRUITING",
+      "locations": [
+        "University of Alabama at Birmingham Cancer Center, Birmingham, United States",
+        "The Kirklin Clinic at Acton Road, Birmingham, United States",
+        "Gulf Health Hospitals Inc/Infirmary Cancer Care - Malbis, Daphne, United States",
+        "Thomas Hospital, Fairhope, United States",
+        "Mobile Infirmary Medical Center, Mobile, United States"
+      ],
+      "matched_on": {
+        "ordinal": 0,
+        "text": "Pathologically (histologically or cytologically) proven diagnosis of non-operable stage IIB or III, node positive (American Joint Committee on Cancer [AJCC] eighth edition) non-small cell lung cancer (NSCLC)",
+        "score": 0.0
+      },
+      "counts": {
+        "met": 4,
+        "not_met": 4,
+        "unclear": 26
+      },
+      "criteria": [
+        {
+          "ordinal": 0,
+          "text": "Pathologically (histologically or cytologically) proven diagnosis of non-operable stage IIB or III, node positive (American Joint Committee on Cancer [AJCC] eighth edition) non-small cell lung cancer (NSCLC)",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient has stage IV NSCLC, not stage IIB or III node positive."
+        },
+        {
+          "ordinal": 1,
+          "text": "Known PD-L1 status prior to registration",
+          "kind": "biomarker",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "PD-L1 status not mentioned in patient description."
+        },
+        {
+          "ordinal": 2,
+          "text": "Patients must have an identified primary tumor and at least one nodal metastasis (peribronchial/hilar/intrapulmonary, mediastinal/subcarinal, supraclavicular/scalene)",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Patient has stage IV disease; primary tumor and nodal metastases not specified."
+        },
+        {
+          "ordinal": 3,
+          "text": "Up to 4 cycles of systemic therapy received prior to registration for the current study cancer is allowable",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Patient has received osimertinib (targeted therapy), not systemic chemotherapy; unclear if this counts as systemic therapy per criterion."
+        },
+        {
+          "ordinal": 4,
+          "text": "Any prior chemotherapy for a different cancer is permissible",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No prior chemotherapy mentioned."
+        },
+        {
+          "ordinal": 5,
+          "text": "Patients who refuse surgery, in addition to those who are technically unresectable or medically inoperable, are eligible",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient has stage IV disease, not non-operable stage IIB/III; not applicable."
+        },
+        {
+          "ordinal": 6,
+          "text": "Patients with separate tumor nodules in the same lobe of the primary tumor are eligible",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information about separate tumor nodules in same lobe."
+        },
+        {
+          "ordinal": 7,
+          "text": "The patient must be deemed clinically appropriate for curative intent definitive combined modality therapy, based on the following staging assessments",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient has stage IV disease with brain metastases, not clinically appropriate for curative intent therapy."
+        },
+        {
+          "ordinal": 8,
+          "text": "History/physical examination prior to registration",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "History/physical exam not described."
+        },
+        {
+          "ordinal": 9,
+          "text": "Magnetic resonance imaging (MRI) scan of the brain (preferred) or CT scan of the brain (if available, contrast is preferred for all neuroimaging) prior to registration",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Brain imaging not mentioned."
+        },
+        {
+          "ordinal": 10,
+          "text": "CT chest with IV contrast (if contrast is available and unless contraindicated, such as for abnormal kidney function) prior to registration. PET/CT may be used if the CT portion is of identical diagnostic quality as achieved in a stand-alone CT",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "CT chest not mentioned."
+        },
+        {
+          "ordinal": 11,
+          "text": "No evidence of distant metastases based on FDG PET/CT scan obtained within 60 days of registration",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient has known brain metastases (distant metastases), so evidence of distant metastases exists."
+        },
+        {
+          "ordinal": 12,
+          "text": "Primary tumor =< 7 cm",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Primary tumor size not provided."
+        },
+        {
+          "ordinal": 13,
+          "text": "Age >= 18",
+          "kind": "age",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient is 58 years old."
+        },
+        {
+          "ordinal": 14,
+          "text": "Eastern Cooperative Oncology Group (ECOG) performance status 0-2",
+          "kind": "ecog",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "ECOG 1 is within 0-2."
+        },
+        {
+          "ordinal": 15,
+          "text": "Hematologic function (e.g. platelets, leukocytes, hemoglobin) amenable, at the discretion of the treating physician, to allow for treatment with chemotherapy and concurrent radiation therapy",
+          "kind": "organ_function",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Hematologic function not described."
+        },
+        {
+          "ordinal": 16,
+          "text": "Creatinine clearance >= 25 mL/min by the Cockcroft-Gault (C-G) equation",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Creatinine clearance 65 mL/min is >= 25."
+        },
+        {
+          "ordinal": 17,
+          "text": "Subjects with non-malignant pleural effusion are eligible provided the effusion is not known or demonstrated to be an exudative effusion",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information about pleural effusion."
+        },
+        {
+          "ordinal": 18,
+          "text": "When pleural fluid is visible on both the CT scan and on a chest x-ray, a pleuracentesis is required to confirm that the pleural fluid is cytologically negative",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information about pleural fluid on imaging."
+        },
+        {
+          "ordinal": 19,
+          "text": "Effusions that are minimal (i.e., not visible on chest x-ray) that are too small to safely tap are eligible",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information about effusions."
+        },
+        {
+          "ordinal": 20,
+          "text": "Medical history consistent with the patient being amenable, at the discretion of the treating physician, to allow for treating with consolidation immunotherapy",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Medical history not described in detail."
+        },
+        {
+          "ordinal": 21,
+          "text": "Patients with known EGFR/ALK/other driver mutation at the time of registration are eligible",
+          "kind": "biomarker",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has EGFR exon 19 deletion, a known driver mutation."
+        },
+        {
+          "ordinal": 22,
+          "text": "Patients with a prior or concurrent malignancy whose natural history or treatment does not have the potential to interfere with the safety or efficacy assessment of the investigational regimen",
+          "kind": "comorbidity",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No prior or concurrent malignancy mentioned."
+        },
+        {
+          "ordinal": 23,
+          "text": "Negative pregnancy test =< 14 days prior to registration for participants of childbearing potential",
+          "kind": "reproductive",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Pregnancy test not mentioned; patient is 58-year-old woman, likely postmenopausal but not stated."
+        },
+        {
+          "ordinal": 24,
+          "text": "The patient or a legally authorized representative must provide study-specific informed consent prior to study entry and, for patients treated in the United States (U.S.), authorization permitting release of personal health information",
+          "kind": "consent",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Informed consent not mentioned."
+        },
+        {
+          "ordinal": 25,
+          "text": "Prior radiotherapy to the study cancer (local recurrence)",
+          "kind": "prior_therapy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No prior radiotherapy mentioned."
+        },
+        {
+          "ordinal": 26,
+          "text": "Prior radiotherapy for a different cancer/condition to the region of the study cancer that would result in overlap of radiation therapy fields that is determined by the treating physician to impede the treatment of the study malignancy",
+          "kind": "prior_therapy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No prior radiotherapy mentioned."
+        },
+        {
+          "ordinal": 27,
+          "text": "Patients without identifiable primary tumor and at least 1 pathologically enlarged lymph node are not eligible (T3-4N0 or T0N1-3 patients are not eligible)",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "Patient has stage IV disease; primary tumor and lymph node status not specified."
+        },
+        {
+          "ordinal": 28,
+          "text": "At least 1 radiographically-involved lymph node is required, but pathologic confirmation of involvement is not mandated",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No information about radiographically-involved lymph node."
+        },
+        {
+          "ordinal": 29,
+          "text": "Centrally located primary tumor < 2 cm from involved nodal disease that would result in significant overlap of the primary SBRT and nodal radiation fields",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No information about tumor location relative to nodal disease."
+        },
+        {
+          "ordinal": 30,
+          "text": "This does not include proximity to involved segmental and subsegmental lymph nodes (levels 13 and 14) that would not result in overlap of dose to the proximal bronchial tree or esophagus",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "Not applicable as no proximity information."
+        },
+        {
+          "ordinal": 31,
+          "text": "Centrally located is defined as within or touching the zone of the proximal bronchial tree, which is a volume 2 cm in all directions around the proximal bronchial tree (carina, right and left main bronchi, right and left upper lobe bronchi, intermedius bronchus, right middle lobe bronchus, lingular bronchus right and left lower lobe bronchi)",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No information about central location."
+        },
+        {
+          "ordinal": 32,
+          "text": "Participants who are pregnant or unwilling to discontinue nursing",
+          "kind": "reproductive",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "Pregnancy status not mentioned; patient is 58-year-old woman, likely postmenopausal but not stated."
+        },
+        {
+          "ordinal": 33,
+          "text": "Participants of childbearing potential (participants who may become pregnant or who may impregnate a partner) unwilling to use highly effective contraceptives during therapy and for the Food and Drug Administration (FDA)-labeled contraception timeframe required after the final dose of the selected systemic therapy regimen, because the treatment in this study may be significantly teratogenic",
+          "kind": "reproductive",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "Contraceptive use not mentioned."
+        }
+      ]
+    },
+    {
+      "nct_id": "NCT07028489",
+      "title": "Prospective External Control Cohort In Patients With Newly Diagnosed Advanced or Metastatic EGFR Mutant Non-Small Cell Lung Cancer",
+      "phase": null,
+      "overall_status": "RECRUITING",
+      "locations": [
+        "Pacific Cancer Care, Monterey, United States",
+        "Torrance Memorial Physician Network-Cancer Care, Torrance, United States",
+        "John Muir Health, Walnut Creek, United States",
+        "Bayhealth Cancer Center- Kent, Dover, United States",
+        "Bayhealth Cancer Center- Sussex, Milford, United States"
+      ],
+      "matched_on": {
+        "ordinal": 0,
+        "text": "Be ≥18 years of age at the time of informed consent",
+        "score": 0.0
+      },
+      "counts": {
+        "met": 4,
+        "not_met": 1,
+        "unclear": 2
+      },
+      "criteria": [
+        {
+          "ordinal": 0,
+          "text": "Be ≥18 years of age at the time of informed consent",
+          "kind": "age",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient is 58 years old, which is ≥18."
+        },
+        {
+          "ordinal": 1,
+          "text": "Evidence of a confirmed diagnosis of EGFR mutant (EGFR exon 19del or EGFR exon 21 L858R) locally advanced or metastatic NSCLC diagnosed on Jan 1st 2024 or later",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "Patient has EGFR exon 19 deletion NSCLC stage IV, but the diagnosis date is not provided."
+        },
+        {
+          "ordinal": 2,
+          "text": "EGFR mutant (EGFR exon 19del or EGFR exon 21 L858R)",
+          "kind": "biomarker",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has EGFR exon 19 deletion, which matches the required mutations."
+        },
+        {
+          "ordinal": 3,
+          "text": "locally advanced or metastatic NSCLC",
+          "kind": "stage",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has stage IV NSCLC, which is metastatic."
+        },
+        {
+          "ordinal": 4,
+          "text": "diagnosed on Jan 1st 2024 or later",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "The diagnosis date is not mentioned in the patient description."
+        },
+        {
+          "ordinal": 5,
+          "text": "ECOG≥2 at diagnosis of advanced or metastatic NSCLC",
+          "kind": "ecog",
+          "is_exclusion": true,
+          "verdict": "met",
+          "rationale": "Patient has ECOG 1, which is not ≥2."
+        },
+        {
+          "ordinal": 6,
+          "text": "Evidence of prior treatment with osimertinib, amivantamab or lazertinib",
+          "kind": "prior_therapy",
+          "is_exclusion": true,
+          "verdict": "not_met",
+          "rationale": "Patient has prior treatment with osimertinib, which is an exclusion criterion."
+        }
+      ]
+    },
+    {
+      "nct_id": "NCT04762199",
+      "title": "MRX-2843 and Osimertinib for the Treatment of Advanced EGFR Mutant Non-small Cell Lung Cancer",
+      "phase": "PHASE1",
+      "overall_status": "RECRUITING",
+      "locations": [
+        "Emory University Hospital/Winship Cancer Institute, Atlanta, United States"
+      ],
+      "matched_on": {
+        "ordinal": 0,
+        "text": "Patients must have histologically confirmed metastatic non-small cell lung cancer (NSCLC)",
+        "score": 0.0
+      },
+      "counts": {
+        "met": 9,
+        "not_met": 2,
+        "unclear": 36
+      },
+      "criteria": [
+        {
+          "ordinal": 0,
+          "text": "Patients must have histologically confirmed metastatic non-small cell lung cancer (NSCLC)",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has histologically confirmed NSCLC (stage IV)."
+        },
+        {
+          "ordinal": 1,
+          "text": "Patients must have activating EGFR mutation including typical and atypical mutations in egfr exons 19 and 21",
+          "kind": "biomarker",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has EGFR exon 19 deletion, which is an activating mutation in exon 19."
+        },
+        {
+          "ordinal": 2,
+          "text": "Eastern Cooperative Oncology Group (ECOG) performance status of 0-2",
+          "kind": "ecog",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has ECOG 1, which is within 0-2."
+        },
+        {
+          "ordinal": 3,
+          "text": "Patients in the expansion cohort must have measurable disease, defined as at least one lesion that can be accurately measured in at least one dimension (longest diameter to be recorded for non-nodal lesions and short axis for nodal lesions) as >= 20 mm (>= 2 cm) by chest x-ray or as >= 10 mm (>= 1 cm) with computed tomography (CT) scan, magnetic resonance imaging (MRI), or calipers by clinical exam",
+          "kind": "measurable_disease",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No mention of measurable disease or lesion measurements."
+        },
+        {
+          "ordinal": 4,
+          "text": "Ability to safely swallow oral medication",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No mention of ability to swallow oral medication."
+        },
+        {
+          "ordinal": 5,
+          "text": "Absolute neutrophil count >= 1500/mm^3",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No lab values for absolute neutrophil count provided."
+        },
+        {
+          "ordinal": 6,
+          "text": "Platelet count >= 100,000/mm^3",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No platelet count provided."
+        },
+        {
+          "ordinal": 7,
+          "text": "Hemoglobin >= 8.5 g/dL (must be > 2 weeks post-red blood cell transfusion)",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No hemoglobin value provided."
+        },
+        {
+          "ordinal": 8,
+          "text": "Bilirubin =< 1.5 x the upper limit of normal (ULN)",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No bilirubin value provided."
+        },
+        {
+          "ordinal": 9,
+          "text": "For subjects with documented Gilbert's disease, bilirubin =< 3.0 mg/dL",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No documentation of Gilbert's disease."
+        },
+        {
+          "ordinal": 10,
+          "text": "For subjects with documented liver metastases, bilirubin =< 2.5 x ULN",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No mention of liver metastases or bilirubin."
+        },
+        {
+          "ordinal": 11,
+          "text": "Serum creatinine =< 1.5 x the ULN or creatinine clearance (CrCl) >= 50 mL/min",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Creatinine clearance 65 mL/min is >= 50 mL/min."
+        },
+        {
+          "ordinal": 12,
+          "text": "Alanine aminotransferase (ALT) and aspartate aminotransferase (AST) =< 3 x the ULN (=< 5 x the ULN for subjects with liver metastases)",
+          "kind": "lab",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No ALT/AST values provided."
+        },
+        {
+          "ordinal": 13,
+          "text": "Women of child-bearing potential and men must agree to use adequate contraception (hormonal or barrier method of birth control; abstinence) prior to study entry and for the duration of study participation",
+          "kind": "reproductive",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on contraception use or child-bearing potential."
+        },
+        {
+          "ordinal": 14,
+          "text": "Females of childbearing potential who are sexually active with a non-sterilized male partner agree to use 2 methods of effective contraception from screening, and agree to continue using such precautions for 90 days after the final dose of study drug",
+          "kind": "reproductive",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on childbearing potential or contraception."
+        },
+        {
+          "ordinal": 15,
+          "text": "Non-sterilized males who are sexually active with a female of childbearing potential must agree to use an acceptable method of effective contraception from Day 1 and for 90 days after the final dose of study drug",
+          "kind": "reproductive",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on male partner or contraception."
+        },
+        {
+          "ordinal": 16,
+          "text": "Female subjects of childbearing potential must be nonpregnant, and have a negative pregnancy test result at screening and day 1 of cycles 1-6",
+          "kind": "reproductive",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No pregnancy test results mentioned."
+        },
+        {
+          "ordinal": 17,
+          "text": "Ability to understand and the willingness to sign a written informed consent document",
+          "kind": "consent",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No mention of ability to understand or sign consent."
+        },
+        {
+          "ordinal": 18,
+          "text": "Dose Escalation Cohort: Patients with progressive EGFR (+) NSCLC disease",
+          "kind": "condition",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has progressive EGFR+ NSCLC (progression on osimertinib)."
+        },
+        {
+          "ordinal": 19,
+          "text": "Dose Escalation Cohort: previously treated or naive to EGFR-tyrosine kinase inhibitor (TKI) (previous treatment with 3rd generation EGFR-TKI including osimertinib allowed)",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has been treated with osimertinib (3rd generation EGFR-TKI), which is allowed."
+        },
+        {
+          "ordinal": 20,
+          "text": "Dose Expansion Cohort A (Treatment naive): Be treatment naive to osimertinib or any other EGFR TKI",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient is not treatment naive; has received osimertinib."
+        },
+        {
+          "ordinal": 21,
+          "text": "Dose Expansion Cohort A (Treatment naive): If treated with an EGFR TKI in the adjuvant, must have discontinued treatment prior to disease recurrence and be free of recurrence for at least 12 months (+1 day) while off treatment",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "not_met",
+          "rationale": "Patient is not treatment naive and has not had adjuvant TKI."
+        },
+        {
+          "ordinal": 22,
+          "text": "Dose Expansion Cohort B (EGFR TKI resistant): Have progression of disease on osimertinib, erlotinib, gefitinib or afatinib as last previous systemic treatment",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has progression on osimertinib as last systemic treatment."
+        },
+        {
+          "ordinal": 23,
+          "text": "Dose Expansion Cohort B (EGFR TKI resistant): If not previously treated with osimertinib, must be EGFR-T790M negative as confirmed using a standard testing platform (circulating tumor deoxyribonucleic acid [ctDNA] or tissue based testing) prior to study treatment",
+          "kind": "biomarker",
+          "is_exclusion": false,
+          "verdict": "met",
+          "rationale": "Patient has been treated with osimertinib, so this criterion (for those not previously treated with osimertinib) is not applicable."
+        },
+        {
+          "ordinal": 24,
+          "text": "Backfill Cohort C: Patients must meet the general eligibility requirements but do not meet cohort specific requirements",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on whether patient meets general eligibility but not cohort-specific requirements."
+        },
+        {
+          "ordinal": 25,
+          "text": "Backfill Cohort C: If currently on osimertinib, must have tolerated the standard dose of 80 mg for at least 2 cycles without any grade > 2 adverse events",
+          "kind": "prior_therapy",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on current osimertinib use or tolerance."
+        },
+        {
+          "ordinal": 26,
+          "text": "Backfill Cohort C: Will be treated at a dose previously established to be safe from the dose escalation cohort",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on dose level or safety."
+        },
+        {
+          "ordinal": 27,
+          "text": "Backfill Cohort C: Will not be included in the dose limiting toxicity (DLT) or maximum tolerated dose (MTD) determination",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on DLT/MTD determination."
+        },
+        {
+          "ordinal": 28,
+          "text": "Backfill Cohort C: Approval by the study sponsor",
+          "kind": "other",
+          "is_exclusion": false,
+          "verdict": "unclear",
+          "rationale": "No information on sponsor approval."
+        },
+        {
+          "ordinal": 29,
+          "text": "Patients who have had chemotherapy or radiotherapy within 4 weeks (6 weeks for nitrosoureas or mitomycin C) prior to entering the study",
+          "kind": "washout",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of prior chemotherapy or radiotherapy within 4 weeks."
+        },
+        {
+          "ordinal": 30,
+          "text": "Patients who have not recovered from adverse events due to prior anti-cancer therapy (i.e., have residual toxicities > grade 1)",
+          "kind": "prior_therapy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of recovery from prior adverse events."
+        },
+        {
+          "ordinal": 31,
+          "text": "Patients who are receiving any other investigational agents",
+          "kind": "concurrent_therapy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of other investigational agents."
+        },
+        {
+          "ordinal": 32,
+          "text": "Patients with symptomatic untreated brain metastases",
+          "kind": "condition",
+          "is_exclusion": true,
+          "verdict": "met",
+          "rationale": "Brain metastases are irradiated and stable, not symptomatic untreated."
+        },
+        {
+          "ordinal": 33,
+          "text": "History of allergic reactions attributed to compounds of similar chemical or biologic composition to MRX-2843 or osimertinib",
+          "kind": "allergy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No history of allergic reactions mentioned."
+        },
+        {
+          "ordinal": 34,
+          "text": "Patients with known diagnosis of interstitial lung disease/pneumonitis",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No diagnosis of interstitial lung disease/pneumonitis mentioned."
+        },
+        {
+          "ordinal": 35,
+          "text": "Patients with corrected QT (QTc) interval prolongation > 500 msec (average of 3 readings)",
+          "kind": "lab",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No QTc interval provided."
+        },
+        {
+          "ordinal": 36,
+          "text": "Patients with family history of congenital long QTc syndrome or torsades",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No family history of long QTc or torsades mentioned."
+        },
+        {
+          "ordinal": 37,
+          "text": "Patients with known cardiomyopathy or decreased left ventricular ejection fraction (LVEF) < 50%",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No known cardiomyopathy or LVEF < 50% mentioned."
+        },
+        {
+          "ordinal": 38,
+          "text": "Patient with known history of keratitis or symptoms suggestive of keratitis (such as eye inflammation, lacrimation, light sensitivity, blurred vision, eye pain and/or red eye)",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No history of keratitis or symptoms mentioned."
+        },
+        {
+          "ordinal": 39,
+          "text": "Patients receiving any medications or substances that are inhibitors or inducers of CYP450 enzyme(s)",
+          "kind": "concurrent_therapy",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of medications that are CYP inhibitors/inducers."
+        },
+        {
+          "ordinal": 40,
+          "text": "Uncontrolled intercurrent illness including, but not limited to, ongoing or active infection, symptomatic congestive heart failure, unstable angina pectoris, cardiac arrhythmia, or psychiatric illness/social situations that would limit compliance with study requirements",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of uncontrolled intercurrent illness."
+        },
+        {
+          "ordinal": 41,
+          "text": "Pregnant women are excluded from this study",
+          "kind": "reproductive",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "Patient is 58-year-old woman, no mention of pregnancy."
+        },
+        {
+          "ordinal": 42,
+          "text": "Breastfeeding should be discontinued if the mother is treated with the study agents",
+          "kind": "reproductive",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of breastfeeding."
+        },
+        {
+          "ordinal": 43,
+          "text": "Human immunodeficiency virus (HIV)-positive patients on combination antiretroviral therapy are ineligible",
+          "kind": "infection",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of HIV status."
+        },
+        {
+          "ordinal": 44,
+          "text": "Subject has known or suspected history of retinitis pigmentosa or known or suspected familial history of retinitis pigmentosa",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No mention of retinitis pigmentosa."
+        },
+        {
+          "ordinal": 45,
+          "text": "Subject has a history of type 1 diabetes (T1D)",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No history of type 1 diabetes mentioned."
+        },
+        {
+          "ordinal": 46,
+          "text": "Subject is considered at high risk for T1D, where high risk is defined as subject has one first-degree relative (defined as parents, offspring or siblings) with T1D and A1C value > 6.5% or subject with two or more first-degree relatives with T1D",
+          "kind": "comorbidity",
+          "is_exclusion": true,
+          "verdict": "unclear",
+          "rationale": "No information on family history of T1D or A1C."
+        }
+      ]
+    }
+  ]
+}
