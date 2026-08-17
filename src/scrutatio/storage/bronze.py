@@ -10,8 +10,10 @@ backfill safe to resume.
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Final
 
@@ -114,6 +116,90 @@ def write_bronze(
 
     logger.info("Landed %d studies into Bronze from batch %s", len(rows), batch)
     return len(rows)
+
+
+@dataclass(frozen=True)
+class TrialMeta:
+    """The header a match result shows above the criterion breakdown."""
+
+    nct_id: str
+    title: str
+    phase: str | None
+    overall_status: str
+    locations: list[str]
+
+
+# One trial in the corpus carries 1,259 locations. Sending them all would make
+# the payload the largest thing in the response and the list unreadable, so the
+# tail is summarised rather than silently dropped — CT.gov has the full list and
+# the UI links to it.
+MAX_LOCATIONS: Final = 10
+
+
+def _format_locations(raw_locations: str | None) -> list[str]:
+    if not raw_locations:
+        return []
+    try:
+        parsed = json.loads(raw_locations)
+    except json.JSONDecodeError:  # pragma: no cover - Bronze holds API output
+        return []
+    if not isinstance(parsed, list):  # pragma: no cover
+        return []
+
+    shown = [
+        ", ".join(
+            part for part in (loc.get("facility"), loc.get("city"), loc.get("country")) if part
+        )
+        for loc in parsed[:MAX_LOCATIONS]
+        if isinstance(loc, dict)
+    ]
+    if len(parsed) > MAX_LOCATIONS:
+        shown.append(f"+{len(parsed) - MAX_LOCATIONS} more")
+    return shown
+
+
+def trial_metadata(db: duckdb.DuckDBPyConnection, nct_ids: Sequence[str]) -> dict[str, TrialMeta]:
+    """Headers for the given trials, read out of the stored API payload.
+
+    Bronze keeps the response verbatim precisely so this needs no second fetch:
+    the registry is a moving target, and re-fetching would mean a match result
+    could disagree with the criteria it was derived from.
+    """
+    if not nct_ids:
+        return {}
+
+    rows = db.execute(
+        f"""
+        SELECT nct_id,
+               json_extract_string(raw, '$.protocolSection.identificationModule.briefTitle'),
+               json_extract(raw, '$.protocolSection.designModule.phases')::VARCHAR,
+               json_extract_string(raw, '$.protocolSection.statusModule.overallStatus'),
+               json_extract(raw, '$.protocolSection.contactsLocationsModule.locations')::VARCHAR
+        FROM {BRONZE_TABLE}
+        WHERE nct_id IN (SELECT unnest(?::VARCHAR[]))
+        """,  # noqa: S608 - table name is a module constant
+        [list(nct_ids)],
+    ).fetchall()
+
+    out: dict[str, TrialMeta] = {}
+    # Not `nct_id`: that name is the imported accessor from `scrutatio.ctgov`, and
+    # shadowing it here would work only for as long as nobody calls it.
+    for identifier, title, phases_json, status, locations_json in rows:
+        phases: list[str] = []
+        if phases_json:
+            try:
+                loaded = json.loads(phases_json)
+                phases = [str(p) for p in loaded] if isinstance(loaded, list) else []
+            except json.JSONDecodeError:  # pragma: no cover
+                phases = []
+        out[str(identifier)] = TrialMeta(
+            nct_id=str(identifier),
+            title=str(title or ""),
+            phase=", ".join(phases) or None,
+            overall_status=str(status or "UNKNOWN"),
+            locations=_format_locations(locations_json),
+        )
+    return out
 
 
 def bronze_count(db: duckdb.DuckDBPyConnection) -> int:

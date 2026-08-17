@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -29,6 +30,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from scrutatio.config import get_settings
+from scrutatio.matching.judge import CriterionJudge
+from scrutatio.matching.schema import MatchResponse
+from scrutatio.pipeline.match import run_match
 from scrutatio.storage import (
     bronze_count,
     bronze_max_update,
@@ -45,6 +49,8 @@ from scrutatio.storage.silver import SILVER_TABLE
 
 if TYPE_CHECKING:
     import duckdb
+
+    from scrutatio.embeddings import CriterionEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,22 @@ def get_db() -> Iterator[duckdb.DuckDBPyConnection]:
 
 
 Db = Annotated["duckdb.DuckDBPyConnection", Depends(get_db)]
+
+
+# The encoder holds a 1.3 GB model and the judge an HTTP client, so both are
+# process-wide rather than per request. Construction is cheap — CriterionEncoder
+# loads its weights on first use — so importing this module still costs nothing
+# and the tests never pay for a model they do not exercise.
+@lru_cache(maxsize=1)
+def _encoder() -> CriterionEncoder:
+    from scrutatio.embeddings import CriterionEncoder as _Encoder
+
+    return _Encoder()
+
+
+@lru_cache(maxsize=1)
+def _judge() -> CriterionJudge:
+    return CriterionJudge()
 
 
 class Health(BaseModel):
@@ -207,12 +229,12 @@ def create_app() -> FastAPI:
             ],
         )
 
-    @app.post("/match")
-    def match(request: MatchRequest, db: Db) -> dict[str, object]:
-        """Not yet available, and says why rather than returning a stub.
+    @app.post("/match", response_model=MatchResponse)
+    def match(request: MatchRequest, db: Db) -> MatchResponse:
+        """Rank trials for a patient description and judge each candidate.
 
-        Becomes real the moment the Gold layer exists — the readiness check reads
-        the same counters the pipeline writes, so nothing here needs changing.
+        Synthetic vignettes only — the disclaimer travels in the response so the
+        UI cannot render a result without it.
         """
         signature = extraction_signature()
         ensure_silver(db)
@@ -224,16 +246,27 @@ def create_app() -> FastAPI:
                 detail=(
                     "Matching is not available yet: the Gold layer holds no vectors. "
                     f"Silver has {gold['criteria']} criteria under signature {signature}; "
-                    f"run `scrutatio embed` to build the index. "
-                    "Develop against frontend/src/services/API/fixtures/match-example.json."
+                    f"run `scrutatio embed` to build the index."
                 ),
             )
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=(
-                f"The index is ready ({gold['vectors']} vectors) but the retrieve-then-rerank "
-                "pipeline is not implemented yet."
-            ),
+        if not settings.openrouter_configured:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OPENROUTER_API_KEY is not set, so candidates cannot be judged.",
+            )
+
+        response, timing = run_match(
+            db=db, encoder=_encoder(), judge=_judge(), text=request.text, k=request.k
         )
+        logger.info(
+            "match k=%d embed=%.2fs retrieve=%.2fs judge=%.2fs cached=%d judged=%d",
+            request.k,
+            timing.embed_seconds,
+            timing.retrieve_seconds,
+            timing.judge_seconds,
+            timing.cache_hits,
+            timing.judged,
+        )
+        return response
 
     return app

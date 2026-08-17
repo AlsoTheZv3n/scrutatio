@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Final
 
 from scrutatio.config import Settings, get_settings
@@ -234,6 +234,37 @@ def _record_failures(
         [(o.nct_id, signature, (o.error or "unknown")[:400]) for o in failed],
     )
     logger.warning("Recorded %d extraction failures", len(failed))
+
+
+def trial_criteria(
+    db: duckdb.DuckDBPyConnection, nct_ids: Sequence[str], signature: str
+) -> dict[str, list[tuple[int, str, str, bool]]]:
+    """Every criterion of the given trials, as ``(ordinal, text, kind, is_exclusion)``.
+
+    Retrieval finds a trial through its single best-matching criterion, but a
+    verdict has to cover all of them — a patient can be excluded by a criterion
+    that looks nothing like their description, which is the whole reason the
+    ranking is not the answer.
+    """
+    if not nct_ids:
+        return {}
+
+    rows = db.execute(
+        f"""
+        SELECT nct_id, ordinal, text, kind, is_exclusion
+        FROM {SILVER_TABLE}
+        WHERE signature = ? AND nct_id IN (SELECT unnest(?::VARCHAR[]))
+        ORDER BY nct_id, ordinal
+        """,  # noqa: S608 - table name is a module constant
+        [signature, list(nct_ids)],
+    ).fetchall()
+
+    out: dict[str, list[tuple[int, str, str, bool]]] = {}
+    for identifier, ordinal, text, kind, is_exclusion in rows:
+        out.setdefault(str(identifier), []).append(
+            (int(ordinal), str(text), str(kind), bool(is_exclusion))
+        )
+    return out
 
 
 def silver_stats(db: duckdb.DuckDBPyConnection, signature: str) -> dict[str, int]:
