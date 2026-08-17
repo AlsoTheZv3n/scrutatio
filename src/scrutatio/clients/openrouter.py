@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Final
+from typing import Any, Final, Self
 
 import httpx
 
@@ -99,7 +99,7 @@ class OpenRouterClient:
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self._settings.llm_timeout_seconds)
 
-    def __enter__(self) -> OpenRouterClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

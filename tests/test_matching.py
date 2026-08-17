@@ -22,9 +22,9 @@ from collections.abc import Iterator, Sequence
 import duckdb
 import pytest
 
+from scrutatio.clients.openrouter import OpenRouterError
 from scrutatio.matching.judge import CriterionJudge, judge_prompt_version
 from scrutatio.matching.schema import CriterionVerdict
-from scrutatio.openrouter import OpenRouterError
 from scrutatio.pipeline.match import run_match
 from scrutatio.storage.bronze import BRONZE_TABLE, ensure_storage, trial_metadata
 from scrutatio.storage.cache import (

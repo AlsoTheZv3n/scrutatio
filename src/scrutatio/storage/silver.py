@@ -15,8 +15,6 @@ rows produced on different platforms from ever mixing.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Final
@@ -25,6 +23,7 @@ from scrutatio.config import Settings, get_settings
 from scrutatio.extraction.client import SYSTEM_PROMPT
 from scrutatio.extraction.schema import ExtractedEligibility, flatten_schema
 from scrutatio.storage.bronze import BRONZE_TABLE
+from scrutatio.utils.hashing import stable_digest
 
 if TYPE_CHECKING:
     import duckdb
@@ -48,7 +47,7 @@ def extraction_signature(settings: Settings | None = None) -> str:
     affected work with no manual bookkeeping.
     """
     cfg = settings or get_settings()
-    material = json.dumps(
+    return stable_digest(
         {
             "model": cfg.extraction_model,
             # Not cosmetic: with reasoning on the same model produced 3,355 output
@@ -57,11 +56,8 @@ def extraction_signature(settings: Settings | None = None) -> str:
             "reasoning": cfg.extraction_reasoning,
             "system_prompt": SYSTEM_PROMPT,
             "schema": flatten_schema(ExtractedEligibility),
-        },
-        sort_keys=True,
-        ensure_ascii=False,
+        }
     )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 def ensure_silver(db: duckdb.DuckDBPyConnection) -> None:

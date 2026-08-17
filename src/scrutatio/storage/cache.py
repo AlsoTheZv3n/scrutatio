@@ -21,7 +21,6 @@ mismatch three times now, so it is applied here before it can.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from typing import TYPE_CHECKING, Final
@@ -29,6 +28,7 @@ from typing import TYPE_CHECKING, Final
 from pydantic import TypeAdapter
 
 from scrutatio.matching.schema import CriterionVerdict
+from scrutatio.utils.hashing import text_digest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,12 +45,11 @@ _VERDICTS = TypeAdapter(list[CriterionVerdict])
 def query_hash(text: str) -> str:
     """Stable key for a patient description.
 
-    Whitespace-normalised and lowercased: the same vignette pasted with a
-    different line wrap is the same question, and paying twice for it would be a
-    surprise rather than a feature.
+    Named separately from ``text_digest`` because this is the cache's contract —
+    the column it keys is ``query_hash`` — while the digest itself is generic.
+    Normalisation rules live in ``scrutatio.utils.hashing``.
     """
-    normalised = " ".join(text.split()).lower()
-    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:32]
+    return text_digest(text)
 
 
 def ensure_cache(db: duckdb.DuckDBPyConnection) -> None:

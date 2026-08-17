@@ -18,14 +18,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, Self
 
 from pydantic import BaseModel, Field, ValidationError
 
+from scrutatio.clients.openrouter import OpenRouterClient, OpenRouterError, message_text
 from scrutatio.config import Settings, get_settings
 from scrutatio.extraction.schema import flatten_schema
 from scrutatio.matching.schema import CriterionVerdict
-from scrutatio.openrouter import OpenRouterClient, OpenRouterError, message_text
+from scrutatio.utils.hashing import stable_digest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -86,14 +87,13 @@ def judge_prompt_version() -> str:
     invalidates exactly the cached verdicts it affects — the same mechanism the
     extraction signature provides for Silver, for the same reason.
     """
-    import hashlib
-
-    cfg = get_settings()
-    material = json.dumps(
-        {"model": cfg.matching_model, "prompt": JUDGE_PROMPT, "schema": flatten_schema(_Judged)},
-        sort_keys=True,
+    return stable_digest(
+        {
+            "model": get_settings().matching_model,
+            "prompt": JUDGE_PROMPT,
+            "schema": flatten_schema(_Judged),
+        }
     )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 class CriterionJudge:
@@ -110,7 +110,7 @@ class CriterionJudge:
         self._client = client or OpenRouterClient(self._settings)
         self.model_name = self._settings.matching_model
 
-    def __enter__(self) -> CriterionJudge:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

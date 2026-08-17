@@ -19,7 +19,8 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from scrutatio.extraction.client import EligibilityExtractor, ExtractionError
+from scrutatio.clients.openrouter import OpenRouterError
+from scrutatio.extraction.client import EligibilityExtractor
 
 if TYPE_CHECKING:
     from scrutatio.extraction.schema import ExtractedEligibility
@@ -97,7 +98,12 @@ def extract_many(
     def work(nct_id: str, text: str) -> ExtractionOutcome:
         try:
             result = extractor.extract(text)
-        except ExtractionError as exc:
+        except OpenRouterError as exc:
+            # The BASE, not ExtractionError. A 429 is raised by the transport as a
+            # plain OpenRouterError, and `except ExtractionError` would not catch
+            # it — a subclass never catches its base. It would fall to the broad
+            # handler below, be recorded with throttled=False, and the trial would
+            # be retired for being rate limited rather than retried.
             throttled = "429" in str(exc)
             tracker.record(ok=False, throttled=throttled)
             logger.warning("Extraction failed for %s: %s", nct_id, str(exc)[:160])

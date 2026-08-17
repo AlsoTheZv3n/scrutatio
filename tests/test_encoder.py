@@ -36,7 +36,7 @@ class TestDimensionGuard:
         class FakeModel:
             def __init__(self, *_: Any, **__: Any) -> None: ...
 
-            def get_sentence_embedding_dimension(self) -> int:
+            def get_embedding_dimension(self) -> int:
                 return dims
 
         monkeypatch.setitem(

@@ -21,7 +21,7 @@ from datetime import date
 from itertools import islice
 from typing import TYPE_CHECKING
 
-from scrutatio.ctgov import CtGovClient, Study
+from scrutatio.clients.ctgov import CtGovClient, Study
 from scrutatio.storage import (
     DEFAULT_BATCH_SIZE,
     bronze_count,

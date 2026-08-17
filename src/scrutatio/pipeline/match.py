@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from scrutatio.clients.openrouter import OpenRouterError
 from scrutatio.matching.judge import CriterionJudge, judge_prompt_version
 from scrutatio.matching.schema import (
     CriterionVerdict,
@@ -34,7 +35,6 @@ from scrutatio.matching.schema import (
     TrialMatch,
     VerdictCounts,
 )
-from scrutatio.openrouter import OpenRouterError
 from scrutatio.storage.bronze import trial_metadata
 from scrutatio.storage.cache import cached_verdicts, ensure_cache, query_hash, store_verdicts
 from scrutatio.storage.gold import search_criteria

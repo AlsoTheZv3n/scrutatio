@@ -22,7 +22,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from scrutatio.ctgov.models import Study
+from scrutatio.clients.ctgov.models import Study
 from scrutatio.storage.bronze import (
     BRONZE_TABLE,
     RUNS_TABLE,

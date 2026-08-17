@@ -14,9 +14,9 @@ import httpx
 import pytest
 import respx
 
+from scrutatio.clients.ctgov import CtGovClient, CtGovError, last_update_posted, nct_id
+from scrutatio.clients.ctgov.models import Study
 from scrutatio.config import Settings
-from scrutatio.ctgov import CtGovClient, CtGovError, last_update_posted, nct_id
-from scrutatio.ctgov.models import Study
 
 STUDIES_URL = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -48,7 +48,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scrutatio.ctgov.client.time.sleep", lambda _: None)
+    monkeypatch.setattr("scrutatio.clients.ctgov.client.time.sleep", lambda _: None)
 
 
 class TestPagination:

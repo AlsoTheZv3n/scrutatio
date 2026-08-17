@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scrutatio.ctgov.models import Study
+from scrutatio.clients.ctgov.models import Study
 from scrutatio.pipeline import run_backfill
 from scrutatio.pipeline.backfill import _chunks
 from scrutatio.pipeline.cli import main

@@ -17,8 +17,7 @@ pytest.importorskip("fastapi", reason="the `serve` extra is not installed")
 
 from fastapi.testclient import TestClient
 
-from scrutatio.api import create_app
-from scrutatio.api.app import get_db
+from scrutatio.app import create_app, get_db
 from scrutatio.storage.bronze import BRONZE_TABLE, ensure_storage
 from scrutatio.storage.db import IN_MEMORY, DatabaseBusyError, connect
 from scrutatio.storage.gold import ensure_gold
@@ -59,6 +58,38 @@ def _land(db: duckdb.DuckDBPyConnection, nct: str, ordinal: int, kind: str, excl
     )
 
 
+class TestIndex:
+    """The base URL must answer. A bare 404 there is the first thing anyone sees."""
+
+    def test_the_root_lists_the_endpoints(self) -> None:
+        with TestClient(create_app()) as c:
+            r = c.get("/")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "Scrutatio"
+        # Every route the app actually serves must be named here, or the index is
+        # documentation that drifts.
+        assert "POST /match" in body["endpoints"]
+        assert "GET /corpus/stats" in body["endpoints"]
+
+    def test_it_carries_the_disclaimer(self) -> None:
+        # Required by the Definition of Done, and cheaper to guarantee here than to
+        # rely on every consumer remembering.
+        with TestClient(create_app()) as c:
+            body = c.get("/").json()
+        assert "not medical advice" in body["disclaimer"]
+
+    def test_it_answers_without_touching_the_database(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def busy(*_: object, **__: object) -> None:
+            raise DatabaseBusyError("held")
+
+        monkeypatch.setattr("scrutatio.app.database", busy)
+        with TestClient(create_app()) as c:
+            assert c.get("/").status_code == 200
+
+
 class TestHealth:
     def test_it_answers_without_touching_the_database(self) -> None:
         # Deliberate: a pipeline run holds the file exclusively, and liveness
@@ -79,13 +110,18 @@ class TestBusyDatabase:
         def busy(*_: object, **__: object) -> None:
             raise DatabaseBusyError("data/scrutatio.duckdb is held by another process")
 
-        monkeypatch.setattr("scrutatio.api.app.database", busy)
+        monkeypatch.setattr("scrutatio.app.database", busy)
         with TestClient(create_app()) as c:
             r = c.get("/corpus/stats")
 
         assert r.status_code == 503
-        assert "another process" in r.json()["detail"]
-        assert "Retry once the run finishes" in r.json()["detail"]
+        # Translated by the handler table in scrutatio.utils.errors rather than by
+        # a try/except in the dependency, so the code is machine-readable and the
+        # wording comes from the exception that actually knows what happened.
+        body = r.json()
+        assert body["code"] == "database_busy"
+        assert "another process" in body["detail"]
+        assert body["request_id"]
 
 
 class TestCors:

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Final
 
-from scrutatio.ctgov import Study, last_update_posted, nct_id
+from scrutatio.clients.ctgov import Study, last_update_posted, nct_id
 
 if TYPE_CHECKING:
     import duckdb
@@ -182,7 +182,7 @@ def trial_metadata(db: duckdb.DuckDBPyConnection, nct_ids: Sequence[str]) -> dic
     ).fetchall()
 
     out: dict[str, TrialMeta] = {}
-    # Not `nct_id`: that name is the imported accessor from `scrutatio.ctgov`, and
+    # Not `nct_id`: that name is the imported accessor from `scrutatio.clients.ctgov`, and
     # shadowing it here would work only for as long as nobody calls it.
     for identifier, title, phases_json, status, locations_json in rows:
         phases: list[str] = []

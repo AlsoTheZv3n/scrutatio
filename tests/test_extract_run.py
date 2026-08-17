@@ -239,3 +239,89 @@ class TestResilience:
         # The trials either side of the explosion still produced results.
         assert by_id["NCT00000001"].ok is True
         assert by_id["NCT00000003"].ok is True
+
+
+class TestThrottlingIsDetectedInTheWorker:
+    """The worker must catch ``OpenRouterError``, not ``ExtractionError``.
+
+    A 429 is raised by the shared transport as a plain ``OpenRouterError``.
+    ``ExtractionError`` is a *subclass* of it, and a subclass never catches its
+    base — so ``except ExtractionError`` would miss every 429, drop it into the
+    broad handler, and record ``throttled=False``. The trial would then be retired
+    for being rate limited instead of retried, which is the exact failure that
+    silently excluded three trials in the first minute of a real run.
+
+    Nothing else covers this: the pipeline tests stub ``extract_many`` out and call
+    ``stats.record`` by hand, so the worker's except clauses are never entered.
+    """
+
+    @staticmethod
+    def _raising(exc: Exception) -> object:
+        class Raising:
+            def extract(self, text: str) -> object:
+                raise exc
+
+        return Raising()
+
+    def test_a_transport_429_is_recorded_as_throttling(self) -> None:
+        from scrutatio.clients.openrouter import OpenRouterError
+        from scrutatio.extraction.runner import extract_many
+
+        stats = RunStats()
+        outcomes = list(
+            extract_many(
+                self._raising(  # type: ignore[arg-type]
+                    OpenRouterError("Request failed after 3 attempts: HTTP 429")
+                ),
+                [("NCT00000001", "text")],
+                max_workers=1,
+                stats=stats,
+            )
+        )
+
+        assert outcomes[0].ok is False
+        assert stats.rate_limited == 1
+        assert stats.failed == 1
+
+    def test_an_extraction_error_is_caught_by_the_same_clause(self) -> None:
+        # The subclass direction that does work: `except OpenRouterError` catches
+        # ExtractionError, so schema failures keep their existing handling.
+        from scrutatio.extraction.client import ExtractionError
+        from scrutatio.extraction.runner import extract_many
+
+        stats = RunStats()
+        outcomes = list(
+            extract_many(
+                self._raising(  # type: ignore[arg-type]
+                    ExtractionError("Model returned schema-invalid JSON despite strict mode")
+                ),
+                [("NCT00000001", "text")],
+                max_workers=1,
+                stats=stats,
+            )
+        )
+
+        assert outcomes[0].ok is False
+        assert "schema-invalid" in (outcomes[0].error or "")
+        # Not throttling: a schema failure is the trial's problem, and counting it
+        # against the attempt budget is correct.
+        assert stats.rate_limited == 0
+
+    def test_a_non_429_transport_failure_is_not_throttling(self) -> None:
+        from scrutatio.clients.openrouter import OpenRouterError
+        from scrutatio.extraction.runner import extract_many
+
+        stats = RunStats()
+        list(
+            extract_many(
+                self._raising(  # type: ignore[arg-type]
+                    OpenRouterError("OpenRouter returned 400: bad schema")
+                ),
+                [("NCT00000001", "text")],
+                max_workers=1,
+                stats=stats,
+            )
+        )
+
+        assert stats.failed == 1
+        assert stats.rate_limited == 0

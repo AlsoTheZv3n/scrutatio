@@ -226,7 +226,7 @@ class TestFailureAccounting:
         # measured at three exclusions in the first minute of a real run.
         write_silver(
             db,
-            [_failure("NCT00000001", "Extraction failed after 6 attempts: HTTP 429")],
+            [_failure("NCT00000001", "Request failed after 6 attempts: HTTP 429")],
             signature=SIG,
         )
 

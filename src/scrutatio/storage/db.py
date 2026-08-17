@@ -51,9 +51,12 @@ def connect(path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
     """
     target = path if path is not None else get_settings().db_path
     if target != IN_MEMORY:
-        target = Path(target)
+        target = Path(target).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         target = str(target)
+    # Absolute, always. DuckDB creates a missing file rather than refusing, so the
+    # only signal that a process opened the wrong one is this line — and a relative
+    # path here would have hidden exactly that.
     logger.info("Opening DuckDB at %s", target)
     try:
         return duckdb.connect(target)

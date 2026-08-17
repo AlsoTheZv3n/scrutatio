@@ -23,13 +23,13 @@ import logging
 import time
 from collections.abc import Iterator
 from datetime import date
-from typing import Any, Final
+from typing import Any, Final, Self
 
 import httpx
 from pydantic import ValidationError
 
+from scrutatio.clients.ctgov.models import PagedStudies, Study
 from scrutatio.config import Settings, get_settings
-from scrutatio.ctgov.models import PagedStudies, Study
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class CtGovClient:
             follow_redirects=True,
         )
 
-    def __enter__(self) -> CtGovClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

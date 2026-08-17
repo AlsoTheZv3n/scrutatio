@@ -1,5 +1,11 @@
 """HTTP surface for the frontend.
 
+Lives at the package root rather than in an ``api/`` subpackage. The package held
+exactly one module, and the app factory is the thing anyone looking for the entry
+point looks for first — ``scrutatio.app:create_app`` is what uvicorn is pointed
+at, and burying it a level down bought nothing. Failure translation moved to
+``scrutatio.utils.errors``, which is shared rather than API-specific.
+
 Two constraints shape this more than anything else, and both are honest limits
 rather than design choices:
 
@@ -8,6 +14,7 @@ holds the file, nothing else can open it — not even read-only, which was
 measured rather than assumed. Connections are therefore opened per request and
 released immediately, so the API never blocks a pipeline run permanently, and a
 request that arrives mid-run gets a 503 saying exactly that instead of hanging.
+This is the single strongest argument for moving to PostgreSQL.
 
 **Endpoints that have no data say so.** ``/match`` needs the Gold layer, which
 needs the extraction pass to finish. Until then it returns 503 naming what is
@@ -19,19 +26,46 @@ own once the vectors exist.
 
 from __future__ import annotations
 
+if __name__ == "__main__":  # pragma: no cover - a signpost, not logic
+    # Deliberately above the imports. This module is a factory, not a script:
+    # uvicorn imports `scrutatio.app:create_app` and calls it, so `python app.py`
+    # either exits silently having defined a function nobody called, or — more
+    # likely — dies on `ModuleNotFoundError: No module named 'scrutatio'`, because
+    # running a file inside the package puts that directory on sys.path rather than
+    # `src/`. Both are unhelpful answers to a reasonable attempt.
+    #
+    # Placed first so it still works in the broken case, which is the only case
+    # where anyone needs it.
+    #
+    # Not a uvicorn.run() shortcut on purpose: that would start the server under
+    # whichever interpreter is on PATH, which is the actual trap. The dependencies
+    # live in .venv, and another Python will have different FastAPI and Pydantic
+    # versions than everything here is tested against.
+    raise SystemExit(
+        "scrutatio/app.py is an application factory, not a script.\n"
+        "\n"
+        "Start the API with:\n"
+        "\n"
+        "    uv run scrutatio serve\n"
+        "    uv run scrutatio serve --port 8123 --reload\n"
+        "\n"
+        "`uv run` selects the project environment. Running `python` directly uses\n"
+        "whatever interpreter is active, which is unlikely to be the one the\n"
+        "dependencies are installed into.\n"
+    )
+
 import logging
 from collections.abc import Iterator
-from contextlib import contextmanager
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from scrutatio.config import get_settings
 from scrutatio.matching.judge import CriterionJudge
-from scrutatio.matching.schema import MatchResponse
+from scrutatio.matching.schema import DISCLAIMER, MatchResponse
 from scrutatio.pipeline.match import run_match
 from scrutatio.storage import (
     bronze_count,
@@ -44,8 +78,8 @@ from scrutatio.storage import (
     gold_stats,
     silver_stats,
 )
-from scrutatio.storage.db import DatabaseBusyError
 from scrutatio.storage.silver import SILVER_TABLE
+from scrutatio.utils.errors import ApiError, ErrorBody, install_error_handling
 
 if TYPE_CHECKING:
     import duckdb
@@ -55,21 +89,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@contextmanager
-def _open_db() -> Iterator[duckdb.DuckDBPyConnection]:
-    """One connection per request; a pipeline run wins the file."""
-    try:
-        with database() as conn:
-            yield conn
-    except DatabaseBusyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"{exc} Retry once the run finishes.",
-        ) from exc
-
-
 def get_db() -> Iterator[duckdb.DuckDBPyConnection]:
-    with _open_db() as conn:
+    """One connection per request; a pipeline run wins the file.
+
+    A plain generator dependency, which FastAPI drives directly — the connection
+    is released when the response is done.
+
+    Nothing is caught here. ``DatabaseBusyError`` propagates and is translated to
+    a 503 by the handler in ``scrutatio.utils.errors``, so the mapping from
+    exception to status lives in one table instead of being duplicated at every
+    site that opens the database.
+    """
+    with database() as conn:
         yield conn
 
 
@@ -92,6 +123,15 @@ def _judge() -> CriterionJudge:
     return CriterionJudge()
 
 
+class ApiIndex(BaseModel):
+    """The root document. A directory, not a landing page."""
+
+    name: str
+    version: str
+    disclaimer: str
+    endpoints: dict[str, str]
+
+
 class Health(BaseModel):
     status: str = "ok"
     signature: str
@@ -106,6 +146,11 @@ class LayerCounts(BaseModel):
     gold_vectors: int
     embedding_model: str
     signature: str
+    # Which file these counts came from. All-zero counts under a valid signature
+    # are indistinguishable from "the pipeline has not run yet" — and once meant a
+    # second, empty database had been created in the wrong directory. One glance
+    # here answers which.
+    database: str
 
 
 class CriterionRow(BaseModel):
@@ -141,7 +186,17 @@ def create_app() -> FastAPI:
             "do not send real patient data."
         ),
         version="0.1.0",
+        responses={
+            "4XX": {"model": ErrorBody},
+            "5XX": {"model": ErrorBody},
+        },
     )
+
+    # Order matters. Starlette runs the last-added middleware outermost, so error
+    # handling goes on first and CORS wraps it — otherwise a 502 would reach the
+    # browser without CORS headers and the frontend would report a network
+    # failure instead of the upstream failure that actually happened.
+    install_error_handling(app)
 
     # The frontend is a Vite dev server on another port, so every request is
     # cross-origin. No credentials: there are no cookies and no sessions, so
@@ -153,6 +208,28 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+
+    @app.get("/", response_model=ApiIndex)
+    def index() -> ApiIndex:
+        """What this service is and what it answers.
+
+        Exists because the alternative is a bare ``404 Not Found`` on the one URL
+        every newcomer tries first — the base address. Touches nothing, so it
+        answers during a pipeline run like ``/health`` does.
+        """
+        return ApiIndex(
+            name="Scrutatio",
+            version=app.version,
+            disclaimer=DISCLAIMER,
+            endpoints={
+                "GET /health": "Liveness. Does not touch the database.",
+                "GET /corpus/stats": "Row counts per layer and the extraction signature.",
+                "GET /corpus/criteria": "Paged criterion explorer. Filter by kind and section.",
+                "POST /match": "Rank trials for a patient description, judged per criterion.",
+                "GET /docs": "Interactive documentation.",
+                "GET /openapi.json": "Machine-readable schema.",
+            },
+        )
 
     @app.get("/health", response_model=Health)
     def health() -> Health:
@@ -178,6 +255,7 @@ def create_app() -> FastAPI:
             gold_vectors=gold["vectors"],
             embedding_model=settings.embedding_model,
             signature=signature,
+            database=str(settings.db_path),
         )
 
     @app.get("/corpus/criteria", response_model=CriterionPage)
@@ -235,23 +313,30 @@ def create_app() -> FastAPI:
 
         Synthetic vignettes only — the disclaimer travels in the response so the
         UI cannot render a result without it.
+
+        Nothing wraps ``run_match``: a failure inside the encoder
+        (``EncoderUnavailableError``) or against OpenRouter (``OpenRouterError``)
+        is translated by the handlers, which know the right status for each. A
+        try/except here would only be able to guess.
         """
         signature = extraction_signature()
         ensure_silver(db)
         ensure_gold(db)
         gold = gold_stats(db, signature, settings.embedding_model)
         if gold["vectors"] == 0:
-            raise HTTPException(
+            raise ApiError(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="gold_empty",
                 detail=(
                     "Matching is not available yet: the Gold layer holds no vectors. "
                     f"Silver has {gold['criteria']} criteria under signature {signature}; "
-                    f"run `scrutatio embed` to build the index."
+                    "run `scrutatio embed` to build the index."
                 ),
             )
         if not settings.openrouter_configured:
-            raise HTTPException(
+            raise ApiError(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="openrouter_unconfigured",
                 detail="OPENROUTER_API_KEY is not set, so candidates cannot be judged.",
             )
 

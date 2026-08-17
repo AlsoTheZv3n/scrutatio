@@ -64,7 +64,7 @@ class CriterionEncoder:
         logger.info("Loading %s on %s", self.model_name, device)
         model = SentenceTransformer(self.model_name, device=device)
 
-        dims = model.get_sentence_embedding_dimension()
+        dims = model.get_embedding_dimension()
         if dims != EMBEDDING_DIMENSIONS:
             # The Gold column is FLOAT[1024]. A mismatch would only surface as an
             # insert failure thousands of vectors in.

@@ -43,6 +43,34 @@ BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 DEFAULT_SCOPE_FILTER = "AREA[ConditionAncestorTerm]Neoplasms AND AREA[StudyType]INTERVENTIONAL"
 
 
+def project_root() -> Path | None:
+    """The checkout this package was imported from, or ``None`` when installed.
+
+    Found by walking up for ``pyproject.toml``. Returns ``None`` inside a wheel or
+    a container, where there is no checkout and ``DB_PATH`` is set explicitly — the
+    Dockerfile passes ``/data/scrutatio.duckdb``.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").is_file():
+            return parent
+    return None
+
+
+def _env_file() -> Path | str:
+    """The project's ``.env``, found regardless of where the process was started.
+
+    The same trap as ``db_path``, and it bites harder. A bare ``env_file=".env"``
+    resolves against the working directory, so starting the API from anywhere but
+    the repository root silently produces a configuration with **no API key** —
+    and the symptom is ``503 openrouter_unconfigured`` on a machine where the key
+    is plainly sitting in the file. Anchoring both is the fix; fixing only the
+    database path, which is what happened first, moves the confusion rather than
+    removing it.
+    """
+    root = project_root()
+    return root / ".env" if root is not None else ".env"
+
+
 class Settings(BaseSettings):
     """Application settings.
 
@@ -50,7 +78,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -91,6 +119,11 @@ class Settings(BaseSettings):
 
     # --- Local storage ----------------------------------------------------
     # One file. `data/` is gitignored.
+    #
+    # Anchored to the checkout rather than the working directory — see the
+    # validator below. Starting the API from `src/scrutatio/` once silently
+    # created a second, empty database there and every layer reported zero, which
+    # is indistinguishable from having lost a 3.2 GB corpus.
     db_path: Path = Path("data/scrutatio.duckdb")
 
     # --- Embeddings -------------------------------------------------------
@@ -117,7 +150,19 @@ class Settings(BaseSettings):
     # cross-origin. Listed explicitly rather than "*": there is no reason for a
     # third-party page to be able to drive this.
     api_cors_origins: list[str] = Field(
-        default=["http://localhost:5173", "http://127.0.0.1:5173"],
+        default=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            # Vite silently takes the next free port when 5173 is occupied, which
+            # happens the moment a second dev server is running. The browser then
+            # blocks every response before the app can report why, so the symptom
+            # is "the backend is down" for a backend that is answering fine.
+            # Two fallbacks cover it; beyond that, set API_CORS_ORIGINS.
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:5175",
+            "http://127.0.0.1:5175",
+        ],
         description="Origins allowed to call the API.",
     )
     api_host: str = "127.0.0.1"
@@ -139,6 +184,27 @@ class Settings(BaseSettings):
     # Start low and raise on evidence — the previous platform was tuned downward
     # from 8 and lost a night to it.
     extraction_workers: int = Field(default=4, ge=1, le=64)
+
+    @field_validator("db_path")
+    @classmethod
+    def _anchor_to_the_checkout(cls, v: Path) -> Path:
+        """Resolve a relative database path against the project, not the shell.
+
+        A relative path plus ``connect()``'s ``mkdir(parents=True)`` is a trap: run
+        anything from the wrong directory and it does not fail, it *creates* an
+        empty database. That happened — the API was started from ``src/scrutatio/``
+        and answered every count with zero while 3.2 GB of corpus sat untouched two
+        directories up. A silent empty database is worse than a crash, because it
+        looks exactly like losing the data.
+
+        Absolute paths are left alone, so ``DB_PATH=/data/scrutatio.duckdb`` in the
+        container still wins. Outside a checkout there is nothing to anchor to and
+        the old behaviour stands.
+        """
+        if v.is_absolute() or str(v) == ":memory:":
+            return v
+        root = project_root()
+        return root / v if root is not None else v
 
     @field_validator("scope_filter")
     @classmethod

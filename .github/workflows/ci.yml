@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Every branch, not just main. The `onprem` branch carried nine commits — an
+  # entire storage and provider migration — with zero CI runs, because it was not
+  # named here and no pull request existed. A filter that has to be edited to cover
+  # new work is a filter that silently stops covering it.
   push:
-    branches: [main]
   pull_request:
 
 # Fork PRs get a read-only token and no secrets. Every job below is fully
@@ -41,6 +44,45 @@ jobs:
 
       - name: Format check
         run: uv run ruff format --check .
+
+      # src/scrutatio/clients/ctgov/models.py is generated from
+      # schemas/ctgov-openapi.yaml. Nothing ever verified that the committed file
+      # still matched the schema, which is how it kept emitting `constr(...)` in
+      # type positions long after Pydantic offered Annotated: the command to
+      # regenerate it existed nowhere, so nobody could tell it was stale.
+      #
+      # The flags now live in [tool.datamodel-codegen] in pyproject.toml, so this
+      # needs no arguments. It writes nothing — it regenerates into a temporary
+      # location and diffs. `disable-timestamp` is what makes that deterministic.
+      - name: Generated models match the schema
+        run: uv run datamodel-codegen --check
+
+      # This replaces .pre-commit-config.yaml, which was deleted. That file could
+      # not live under .github/ — pre-commit looks for it only at the repository
+      # root — and everything in it was already covered better here: ruff by the
+      # two steps above (pinned through uv.lock rather than a hand-maintained
+      # `rev:` that can drift), and detect-private-key by the secret-scan job
+      # below, which is gitleaks over the full history rather than the worktree.
+      #
+      # One check was genuinely unique, and it is the one worth keeping: data/
+      # holds a 3.2 GB DuckDB file. It is gitignored, but a multi-gigabyte blob
+      # committed by accident cannot be taken out of history without a rewrite, so
+      # this guards the single mistake here that is not undoable.
+      #
+      # 2 MiB, not pre-commit's 500 KB default: uv.lock is legitimately 733 KB.
+      - name: Refuse oversized tracked files
+        run: |
+          limit=2097152
+          oversized=$(git ls-files | while read -r f; do
+            [ -f "$f" ] || continue
+            size=$(wc -c <"$f")
+            [ "$size" -gt "$limit" ] && printf '  %s (%s bytes)\n' "$f" "$size"
+          done)
+          if [ -n "$oversized" ]; then
+            printf 'Tracked files over 2 MiB:\n%s\n' "$oversized"
+            exit 1
+          fi
+          echo "No tracked file exceeds 2 MiB."
 
       - name: Test with coverage gate
         run: uv run pytest

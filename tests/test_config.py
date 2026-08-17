@@ -4,6 +4,8 @@ an API key must never surface in a repr, log line, or traceback.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,6 +15,7 @@ from scrutatio.config import (
     EMBEDDING_DIMENSIONS,
     Settings,
     get_settings,
+    project_root,
 )
 
 DUMMY_KEY = "fake-key-for-tests-only"
@@ -73,6 +76,45 @@ class TestDefaults:
 
     def test_database_is_a_local_file(self, clean_env: None) -> None:
         assert _settings().db_path.suffix == ".duckdb"
+
+    def test_the_database_path_is_absolute(self, clean_env: None) -> None:
+        # A relative path plus connect()'s mkdir(parents=True) means running from
+        # the wrong directory does not fail — it creates an empty database. That
+        # happened: the API was started from src/scrutatio/, reported zero for every
+        # layer, and looked exactly like a lost 3.2 GB corpus.
+        assert _settings().db_path.is_absolute()
+
+    def test_the_database_path_does_not_depend_on_the_working_directory(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from_here = _settings().db_path
+        monkeypatch.chdir(tmp_path)
+        assert _settings().db_path == from_here
+
+    def test_it_is_anchored_to_the_checkout(self, clean_env: None) -> None:
+        root = project_root()
+        assert root is not None, "these tests run from a checkout"
+        assert _settings().db_path == root / "data" / "scrutatio.duckdb"
+
+    def test_the_env_file_is_found_from_any_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Same trap as db_path, and worse: a .env resolved against the working
+        # directory means starting the API from src/scrutatio/ yields a config with
+        # no API key, and /match answers 503 openrouter_unconfigured on a machine
+        # where the key is sitting right there in the file.
+        from scrutatio.config import _env_file
+
+        here = _env_file()
+        monkeypatch.chdir(tmp_path)
+        assert _env_file() == here
+        assert Path(str(here)).is_absolute()
+
+    def test_an_absolute_override_is_left_alone(self, clean_env: None) -> None:
+        # DB_PATH=/data/scrutatio.duckdb is what the Dockerfile passes, and
+        # anchoring it to a checkout that does not exist there would break the image.
+        explicit = Path("/data/elsewhere.duckdb").resolve()
+        assert _settings(db_path=explicit).db_path == explicit
 
     def test_unconfigured_by_default(self, clean_env: None) -> None:
         assert _settings().openrouter_configured is False

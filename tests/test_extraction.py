@@ -15,6 +15,7 @@ import pytest
 import respx
 from pydantic import BaseModel
 
+from scrutatio.clients.openrouter import OpenRouterError, message_text, parse_body
 from scrutatio.config import Settings
 from scrutatio.extraction import (
     Criterion,
@@ -27,11 +28,7 @@ from scrutatio.extraction import (
     response_format,
     token_budget,
 )
-from scrutatio.extraction.client import (
-    MAX_TOKEN_CEILING,
-    MIN_MAX_TOKENS,
-    _message_text,
-)
+from scrutatio.extraction.client import MAX_TOKEN_CEILING, MIN_MAX_TOKENS
 
 TOKEN = "fake-token-for-tests-only"
 ENDPOINT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -65,7 +62,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scrutatio.extraction.client.time.sleep", lambda _: None)
+    monkeypatch.setattr("scrutatio.clients.openrouter.time.sleep", lambda _: None)
 
 
 def _envelope(content: Any) -> dict[str, Any]:
@@ -112,8 +109,14 @@ class TestSchemaFlattening:
 
 
 class TestMessageShapes:
+    """Lives in the shared transport now, not in the extraction client.
+
+    Both callers hit the same two content shapes, and the parser was duplicated
+    before. Tested here because extraction is what paid for the lesson.
+    """
+
     def test_plain_string_content(self) -> None:
-        assert _message_text({"content": '{"criteria": []}'}) == '{"criteria": []}'
+        assert message_text({"content": '{"criteria": []}'}) == '{"criteria": []}'
 
     def test_reasoning_model_array_content(self) -> None:
         # gpt-oss returns [{"type": "reasoning", ...}, {"type": "text", ...}].
@@ -123,7 +126,7 @@ class TestMessageShapes:
                 {"type": "text", "text": '{"criteria": []}'},
             ]
         }
-        assert _message_text(message) == '{"criteria": []}'
+        assert message_text(message) == '{"criteria": []}'
 
     def test_reasoning_is_discarded_not_concatenated(self) -> None:
         message = {
@@ -132,15 +135,15 @@ class TestMessageShapes:
                 {"type": "text", "text": "answer"},
             ]
         }
-        assert _message_text(message) == "answer"
+        assert message_text(message) == "answer"
 
     def test_unknown_shape_raises(self) -> None:
-        with pytest.raises(ExtractionError, match="Could not find assistant text"):
-            _message_text({"content": 42})
+        with pytest.raises(OpenRouterError, match="Could not find assistant text"):
+            message_text({"content": 42})
 
     def test_array_without_text_part_raises(self) -> None:
-        with pytest.raises(ExtractionError):
-            _message_text({"content": [{"type": "reasoning", "text": "only thinking"}]})
+        with pytest.raises(OpenRouterError):
+            message_text({"content": [{"type": "reasoning", "text": "only thinking"}]})
 
 
 class TestExtract:
@@ -313,7 +316,7 @@ class TestRetries:
         self, settings: Settings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         seen: list[float] = []
-        monkeypatch.setattr("scrutatio.extraction.client.time.sleep", seen.append)
+        monkeypatch.setattr("scrutatio.clients.openrouter.time.sleep", seen.append)
 
         route = respx.post(ENDPOINT_URL)
         route.side_effect = [
@@ -330,7 +333,7 @@ class TestRetries:
         self, settings: Settings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         seen: list[float] = []
-        monkeypatch.setattr("scrutatio.extraction.client.time.sleep", seen.append)
+        monkeypatch.setattr("scrutatio.clients.openrouter.time.sleep", seen.append)
 
         route = respx.post(ENDPOINT_URL)
         route.side_effect = [
@@ -346,7 +349,9 @@ class TestRetries:
     def test_400_is_not_retried(self, settings: Settings) -> None:
         route = respx.post(ENDPOINT_URL).mock(httpx.Response(400, text="bad schema"))
 
-        with EligibilityExtractor(settings) as ex, pytest.raises(ExtractionError, match="400"):
+        # OpenRouterError, not ExtractionError: a 400 is the transport refusing to
+        # retry, which happens before anything extraction-specific is involved.
+        with EligibilityExtractor(settings) as ex, pytest.raises(OpenRouterError, match="400"):
             ex.extract("text")
         assert route.call_count == 1
 
@@ -356,7 +361,7 @@ class TestRetries:
 
         with (
             EligibilityExtractor(settings) as ex,
-            pytest.raises(ExtractionError, match="failed after"),
+            pytest.raises(OpenRouterError, match="failed after"),
         ):
             ex.extract("text")
         assert route.call_count == settings.max_retries + 1
@@ -400,37 +405,31 @@ class TestMalformedBody:
     """
 
     def test_a_clean_body_parses(self) -> None:
-        from scrutatio.extraction.client import _parse_body
-
         response = httpx.Response(200, json={"ok": True})
-        assert _parse_body(response) == {"ok": True}
+        assert parse_body(response) == {"ok": True}
 
     def test_keep_alive_padding_before_the_body_is_discarded(self) -> None:
-        from scrutatio.extraction.client import _parse_body
-
         padding = ": OPENROUTER PROCESSING\n" * 40
         response = httpx.Response(200, text=padding + '{"ok": true}')
-        assert _parse_body(response) == {"ok": True}
+        assert parse_body(response) == {"ok": True}
 
     def test_an_unparseable_body_reports_what_it_saw(self) -> None:
-        from scrutatio.extraction.client import ExtractionError, _parse_body
-
         response = httpx.Response(200, text="<html>502 Bad Gateway</html>")
-        with pytest.raises(ExtractionError, match="502 Bad Gateway"):
-            _parse_body(response)
+        with pytest.raises(OpenRouterError, match="502 Bad Gateway"):
+            parse_body(response)
 
     def test_a_malformed_body_does_not_escape_as_a_json_error(
         self, settings: Settings, no_sleep: None
     ) -> None:
-        # The whole point: it must arrive as an ExtractionError so the runner
-        # records it and keeps going, rather than unwinding the run.
+        # The whole point: it must arrive as an OpenRouterError so the runner
+        # records it and keeps going, rather than unwinding the run. That the
+        # runner catches this exact type is what makes it true — see the note on
+        # ExtractionError's base class.
         import respx
-
-        from scrutatio.extraction.client import ExtractionError
 
         with respx.mock:
             respx.post(ENDPOINT_URL).mock(httpx.Response(200, text="not json at all"))
-            with EligibilityExtractor(settings) as ex, pytest.raises(ExtractionError):
+            with EligibilityExtractor(settings) as ex, pytest.raises(OpenRouterError):
                 ex.extract("INCLUSION: adult.")
 
 

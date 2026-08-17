@@ -10,8 +10,8 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from scrutatio.clients.ctgov import CtGovClient
 from scrutatio.config import get_settings
-from scrutatio.ctgov import CtGovClient
 from scrutatio.extraction import EligibilityExtractor
 from scrutatio.pipeline.backfill import run_backfill
 from scrutatio.pipeline.extract import run_extraction
@@ -186,7 +186,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     print(f"CORS origins: {', '.join(settings.api_cors_origins)}")
     print(f"Docs: http://{args.host}:{args.port}/docs")
     uvicorn.run(
-        "scrutatio.api.app:create_app",
+        "scrutatio.app:create_app",
         factory=True,
         host=args.host,
         port=args.port,

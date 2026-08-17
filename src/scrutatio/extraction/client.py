@@ -4,21 +4,28 @@ One call per trial covering all criteria — not one call per criterion. The
 per-criterion fan-out costs close to an order of magnitude more tokens for worse
 Micro-F1, so the cheap shape is also the accurate one.
 
-OpenRouter speaks the OpenAI chat-completions shape, which is what the previous
-Databricks Foundation Model client already spoke; the port was a base URL, an
-auth header and a model id.
+The HTTP transport is **not** here. It lives in ``scrutatio.clients.openrouter``
+and is shared with the matching judge. It used to be duplicated: this file carried
+its own copy of the retry loop, the header block, the keep-alive-padding parser
+and the ``Retry-After`` handling — six elements, roughly a hundred lines, and two
+mutually unaware exception hierarchies. Nothing had gone wrong yet, but every
+lesson learned against the endpoint had to be applied twice or it applied to one
+caller only.
 
-Two response-shape hazards are handled here, both learned the expensive way:
+What remains here is what is genuinely about extraction:
 
-1. **``message.content`` is not always a string.** Some models return a list of
-   typed parts — a reasoning part followed by a text part. A client that assumes
-   ``str`` breaks on them.
-2. **Reasoning tokens count against the output budget.** ``gpt-oss-120b`` cost a
+1. **The token budget.** ``max_tokens`` bounds everything the model writes, and a
+   truncation discards the whole response. The ratio below is measured, and the
+   budget is an invitation rather than a free ceiling — see ``_OUTPUT_RATIO``.
+2. **Truncation is not a schema violation.** ``finish_reason == "length"`` means
+   strict mode worked and the answer was simply cut off, so it gets its own error
+   type and a retry with a doubled budget.
+3. **Reasoning tokens count against the output budget.** ``gpt-oss-120b`` cost a
    full run this way: thinking consumed the ceiling and a third of responses were
-   cut off mid-JSON. ``usage`` is therefore accumulated per extractor so a
-   calibration run can compare completion tokens against the size of the JSON
-   that actually came back. A large gap means the model is reasoning, and for
-   structured extraction that is pure waste.
+   cut off mid-JSON. ``usage`` is accumulated per extractor so a calibration run
+   can compare completion tokens against the size of the JSON that actually came
+   back. A large gap means the model is reasoning, and for structured extraction
+   that is pure waste.
 """
 
 from __future__ import annotations
@@ -26,13 +33,13 @@ from __future__ import annotations
 import json
 import logging
 import threading
-import time
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Self
 
 import httpx
 from pydantic import ValidationError
 
+from scrutatio.clients.openrouter import OpenRouterClient, OpenRouterError, message_text
 from scrutatio.config import Settings, get_settings
 from scrutatio.extraction.schema import ExtractedEligibility, response_format
 
@@ -118,11 +125,22 @@ _REASONING_HEADROOM: Final = 500
 _OUTPUT_RATIO: Final = 4.5
 _CHARS_PER_TOKEN: Final = 4
 
-_RETRY_STATUS: Final = frozenset({429, 500, 502, 503, 504})
 
+class ExtractionError(OpenRouterError):
+    """The model's answer could not be turned into typed criteria.
 
-class ExtractionError(RuntimeError):
-    """The endpoint failed, or returned something that is not valid output."""
+    Subclassing ``OpenRouterError`` is not cosmetic. The two were unrelated types
+    raised by two copies of the same transport, so a handler catching one silently
+    missed the other — and the API's error table maps ``OpenRouterError`` to 502.
+    An extraction failure arriving there unmapped would have become a 500, telling
+    the caller "our fault, do not retry" about an upstream problem.
+
+    For anyone adding a handler: ``except ExtractionError`` does **not** catch a
+    bare ``OpenRouterError`` from the transport — a subclass never catches its
+    base. ``extraction/runner.py`` therefore catches ``OpenRouterError``, because
+    its throttling detection reads "429" out of the message and a 429 is raised by
+    the transport rather than here.
+    """
 
 
 class TruncatedResponseError(ExtractionError):
@@ -180,51 +198,6 @@ def token_budget(eligibility_text: str) -> int:
     return max(MIN_MAX_TOKENS, min(estimated, MAX_TOKEN_CEILING))
 
 
-def _parse_body(response: httpx.Response) -> dict[str, Any]:
-    """Parse a 200 response, tolerating keep-alive padding.
-
-    OpenRouter emits SSE-style comment lines while an upstream provider is slow,
-    even on non-streaming requests. They arrive ahead of the JSON body and are
-    not themselves valid JSON, so a bare ``response.json()`` raises on an
-    otherwise perfectly good answer. Observed in the wild at line 255 of a 1,397
-    character body — and it killed a run that was three batches in, because a
-    ``JSONDecodeError`` is not an ``ExtractionError`` and nothing caught it.
-    """
-    try:
-        return response.json()  # type: ignore[no-any-return]
-    except json.JSONDecodeError:
-        text = response.text
-        start = text.find("{")
-        if start > 0:
-            try:
-                parsed = json.loads(text[start:])
-            except json.JSONDecodeError:
-                pass
-            else:
-                logger.warning("Discarded %d bytes of padding before the JSON body", start)
-                return parsed  # type: ignore[no-any-return]
-        # Log the head verbatim: the next occurrence should be diagnosable
-        # without reproducing it.
-        msg = f"Response body was not JSON. First 200 bytes: {text[:200]!r}"
-        raise ExtractionError(msg) from None
-
-
-def _message_text(message: dict[str, Any]) -> str:
-    """Pull the assistant text out of either response shape."""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        # Reasoning parts are deliberately discarded; only `text` is the answer.
-        parts = [
-            p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
-        ]
-        if parts:
-            return "".join(parts)
-    msg = f"Could not find assistant text in message of type {type(content).__name__}"
-    raise ExtractionError(msg)
-
-
 class EligibilityExtractor:
     """Turns eligibility prose into validated, typed predicates."""
 
@@ -237,38 +210,22 @@ class EligibilityExtractor:
         max_tokens: int | None = None,
     ) -> None:
         self._settings = settings or get_settings()
-        if not self._settings.openrouter_configured:
-            msg = "OPENROUTER_API_KEY must be set to run extraction"
-            raise ValueError(msg)
         self._model = model or self._settings.extraction_model
-        self._reasoning = self._settings.extraction_reasoning
-        self._provider_sort = self._settings.extraction_provider_sort
         self._max_tokens = max_tokens
-        self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=self._settings.llm_timeout_seconds)
+        # The shared transport owns the credential check, the retry policy and the
+        # httpx client. An injected client is forwarded, so it stays the caller's
+        # to close.
+        self._client = OpenRouterClient(self._settings, client=client)
         self.usage = TokenUsage()
 
-    def __enter__(self) -> EligibilityExtractor:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
 
     def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
-
-    @property
-    def _headers(self) -> dict[str, str]:
-        key = self._settings.openrouter_api_key
-        assert key is not None  # guaranteed by openrouter_configured
-        return {
-            "Authorization": f"Bearer {key.get_secret_value()}",
-            "Content-Type": "application/json",
-            # OpenRouter uses these for attribution; harmless and polite.
-            "HTTP-Referer": "https://github.com/AlsoTheZv3n/scrutatio",
-            "X-Title": "scrutatio",
-        }
+        self._client.close()
 
     def extract(self, eligibility_text: str) -> ExtractedEligibility:
         """Extract structured criteria from one trial's eligibility section.
@@ -294,32 +251,26 @@ class EligibilityExtractor:
             return self._attempt(eligibility_text, retry_budget)
 
     def _attempt(self, eligibility_text: str, max_tokens: int) -> ExtractedEligibility:
-        payload: dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": eligibility_text},
-            ],
-            "temperature": 0,
-            "max_tokens": max_tokens,
-            "response_format": response_format(ExtractedEligibility, "eligibility"),
-        }
-        if not self._reasoning:
-            # OpenRouter's unified switch. `effort: low` is not a substitute — it
-            # still spent 2.5x the answer in tokens on one trial and truncated on
-            # another.
-            payload["reasoning"] = {"enabled": False}
-        if self._provider_sort:
-            # Deliberately NOT part of the extraction signature. Routing is
-            # infrastructure, not a model change — the model id is identical, and
-            # signing it would re-queue every trial already extracted for the sake
-            # of a latency preference. The honest caveat: the corpus is already
-            # provider-heterogeneous, because default routing spread the first
-            # 7,679 trials across at least eight of them. Pinning makes what
-            # follows more consistent, not less.
-            payload["provider"] = {"sort": self._provider_sort}
+        # Reasoning and provider routing are applied by the shared transport from
+        # settings, so both callers get them without either having to remember.
+        #
+        # Routing is deliberately NOT part of the extraction signature. It is
+        # infrastructure, not a model change — the model id is identical, and
+        # signing it would re-queue every trial already extracted for the sake of a
+        # latency preference. The honest caveat: the corpus is already
+        # provider-heterogeneous, because default routing spread the first 7,679
+        # trials across at least eight of them. Pinning makes what follows more
+        # consistent, not less. Guarded by a test.
+        payload = self._client.build_payload(
+            model=self._model,
+            system=SYSTEM_PROMPT,
+            user=eligibility_text,
+            max_tokens=max_tokens,
+            response_format=response_format(ExtractedEligibility, "eligibility"),
+            reasoning=self._settings.extraction_reasoning,
+        )
 
-        body = self._post(payload)
+        body = self._client.post(payload)
 
         try:
             choice = body["choices"][0]
@@ -337,7 +288,7 @@ class EligibilityExtractor:
             msg = f"Response hit the {max_tokens}-token ceiling before closing the JSON"
             raise TruncatedResponseError(msg)
 
-        text = _message_text(message)
+        text = message_text(message)
         self.usage.record(body.get("usage"), len(text))
 
         try:
@@ -345,41 +296,3 @@ class EligibilityExtractor:
         except ValidationError as exc:
             msg = f"Model returned schema-invalid JSON despite strict mode: {exc}"
             raise ExtractionError(msg) from exc
-
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        url = self._settings.chat_completions_url
-        last: str | None = None
-
-        for attempt in range(self._settings.max_retries + 1):
-            response: httpx.Response | None = None
-            try:
-                response = self._client.post(url, json=payload, headers=self._headers)
-            except httpx.HTTPError as exc:
-                last = str(exc)
-            else:
-                if response.status_code == httpx.codes.OK:
-                    return _parse_body(response)
-                if response.status_code not in _RETRY_STATUS:
-                    msg = f"OpenRouter returned {response.status_code}: {response.text[:300]}"
-                    raise ExtractionError(msg)
-                last = f"HTTP {response.status_code}"
-
-            if attempt < self._settings.max_retries:
-                delay = self._retry_delay(response, attempt)
-                logger.warning("Extraction retry %d in %.0fs: %s", attempt + 1, delay, last)
-                time.sleep(delay)
-
-        msg = f"Extraction failed after {self._settings.max_retries + 1} attempts: {last}"
-        raise ExtractionError(msg)
-
-    @staticmethod
-    def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
-        """Honour ``Retry-After`` when the endpoint sends it; else back off."""
-        if response is not None:
-            header = response.headers.get("retry-after")
-            if header:
-                try:
-                    return float(header)
-                except ValueError:
-                    pass
-        return 2.0**attempt
