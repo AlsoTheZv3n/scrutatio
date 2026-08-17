@@ -242,6 +242,7 @@ class EligibilityExtractor:
             raise ValueError(msg)
         self._model = model or self._settings.extraction_model
         self._reasoning = self._settings.extraction_reasoning
+        self._provider_sort = self._settings.extraction_provider_sort
         self._max_tokens = max_tokens
         self._owns_client = client is None
         self._client = client or httpx.Client(timeout=self._settings.llm_timeout_seconds)
@@ -308,6 +309,15 @@ class EligibilityExtractor:
             # still spent 2.5x the answer in tokens on one trial and truncated on
             # another.
             payload["reasoning"] = {"enabled": False}
+        if self._provider_sort:
+            # Deliberately NOT part of the extraction signature. Routing is
+            # infrastructure, not a model change — the model id is identical, and
+            # signing it would re-queue every trial already extracted for the sake
+            # of a latency preference. The honest caveat: the corpus is already
+            # provider-heterogeneous, because default routing spread the first
+            # 7,679 trials across at least eight of them. Pinning makes what
+            # follows more consistent, not less.
+            payload["provider"] = {"sort": self._provider_sort}
 
         body = self._post(payload)
 

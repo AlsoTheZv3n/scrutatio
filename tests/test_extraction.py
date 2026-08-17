@@ -432,3 +432,46 @@ class TestMalformedBody:
             respx.post(ENDPOINT_URL).mock(httpx.Response(200, text="not json at all"))
             with EligibilityExtractor(settings) as ex, pytest.raises(ExtractionError):
                 ex.extract("INCLUSION: adult.")
+
+
+class TestProviderRouting:
+    """18 providers serve the model; default routing scatters across them and a
+    batch is paced by its slowest concurrent request.
+    """
+
+    def test_throughput_sort_is_sent(self, settings: Settings) -> None:
+        import respx
+
+        with respx.mock:
+            route = respx.post(ENDPOINT_URL).mock(
+                httpx.Response(200, json=_envelope(json.dumps(RESULT)))
+            )
+            with EligibilityExtractor(settings) as ex:
+                ex.extract("INCLUSION: adult.")
+
+        sent = json.loads(route.calls[0].request.content)
+        assert sent["provider"] == {"sort": "throughput"}
+
+    def test_it_can_be_switched_off(self) -> None:
+        import respx
+
+        bare = Settings(  # type: ignore[call-arg]
+            _env_file=None, openrouter_api_key=TOKEN, extraction_provider_sort=None
+        )
+        with respx.mock:
+            route = respx.post(ENDPOINT_URL).mock(
+                httpx.Response(200, json=_envelope(json.dumps(RESULT)))
+            )
+            with EligibilityExtractor(bare) as ex:
+                ex.extract("INCLUSION: adult.")
+
+        assert "provider" not in json.loads(route.calls[0].request.content)
+
+    def test_routing_is_not_part_of_the_signature(self) -> None:
+        # Signing it would re-queue every already-extracted trial for a latency
+        # preference. Routing is infrastructure; the model id is unchanged.
+        from scrutatio.storage.silver import extraction_signature
+
+        a = Settings(_env_file=None, extraction_provider_sort="throughput")  # type: ignore[call-arg]
+        b = Settings(_env_file=None, extraction_provider_sort=None)  # type: ignore[call-arg]
+        assert extraction_signature(a) == extraction_signature(b)

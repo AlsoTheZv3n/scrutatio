@@ -76,6 +76,19 @@ class Settings(BaseSettings):
     # change models. Matching may want it on; extraction does not.
     extraction_reasoning: bool = False
 
+    # 18 providers serve deepseek-v4-flash, and default routing scatters requests
+    # across them. Measured on four real trials, interleaved: default routing
+    # ranged 46.8-112.7 tok/s (a 2.4x spread, hitting Parasail, Alibaba,
+    # AtlasCloud and StreamLake); `sort=throughput` pinned to one fast provider
+    # and ranged 73.7-111.7.
+    #
+    # The median only improves 1.31x, but the median is not what costs time: a
+    # batch finishes when the slowest of its concurrent requests does, so one
+    # slow provider in the wave paces the whole batch. Overnight throughput fell
+    # from ~950 to ~350 trials/hour with zero rate limiting, which is what that
+    # looks like. Set to None to let OpenRouter choose.
+    extraction_provider_sort: str | None = "throughput"
+
     # --- Local storage ----------------------------------------------------
     # One file. `data/` is gitignored.
     db_path: Path = Path("data/scrutatio.duckdb")
