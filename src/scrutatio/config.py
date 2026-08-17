@@ -112,6 +112,17 @@ class Settings(BaseSettings):
     recruiting_only: bool = True
     page_size: int = Field(default=1000, ge=1, le=1000)
 
+    # --- HTTP API ---------------------------------------------------------
+    # The frontend is a Vite dev server on its own port, so every call is
+    # cross-origin. Listed explicitly rather than "*": there is no reason for a
+    # third-party page to be able to drive this.
+    api_cors_origins: list[str] = Field(
+        default=["http://localhost:5173", "http://127.0.0.1:5173"],
+        description="Origins allowed to call the API.",
+    )
+    api_host: str = "127.0.0.1"
+    api_port: int = Field(default=8000, ge=1, le=65535)
+
     # --- Behaviour --------------------------------------------------------
     request_timeout_seconds: float = Field(
         default=30.0, gt=0, description="ClinicalTrials.gov HTTP timeout."

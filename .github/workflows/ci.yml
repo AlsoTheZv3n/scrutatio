@@ -30,8 +30,11 @@ jobs:
       - name: Set up Python
         run: uv python install
 
+      # `serve` is fastapi + uvicorn, small and offline-testable. `embeddings`
+      # is deliberately excluded: it pulls torch, and the storage layer it
+      # feeds is tested with constructed vectors instead.
       - name: Install dependencies
-        run: uv sync --all-groups --frozen
+        run: uv sync --all-groups --extra serve --frozen
 
       - name: Lint
         run: uv run ruff check --output-format=github .

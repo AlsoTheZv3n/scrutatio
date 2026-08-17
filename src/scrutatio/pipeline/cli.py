@@ -71,6 +71,11 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("text", help="patient description (synthetic vignettes only)")
     search.add_argument("-k", type=int, default=10, help="how many trials to return")
 
+    serve = sub.add_parser("serve", help="run the HTTP API the frontend talks to")
+    serve.add_argument("--host", default=settings.api_host)
+    serve.add_argument("--port", type=int, default=settings.api_port)
+    serve.add_argument("--reload", action="store_true", help="restart on code changes")
+
     sub.add_parser("status", help="show pipeline progress")
 
     return parser
@@ -174,6 +179,22 @@ def _cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    settings = get_settings()
+    print(f"CORS origins: {', '.join(settings.api_cors_origins)}")
+    print(f"Docs: http://{args.host}:{args.port}/docs")
+    uvicorn.run(
+        "scrutatio.api.app:create_app",
+        factory=True,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
+    return 0
+
+
 def _cmd_status(_: argparse.Namespace) -> int:
     with database() as db:
         # Status must work on a fresh database, before any run has created tables.
@@ -212,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         "extract": _cmd_extract,
         "embed": _cmd_embed,
         "search": _cmd_search,
+        "serve": _cmd_serve,
         "status": _cmd_status,
     }
     try:

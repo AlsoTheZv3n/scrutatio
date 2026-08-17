@@ -27,6 +27,12 @@ embeddings = [
 tracking = [
     "mlflow>=3.0",
 ]
+# The HTTP surface the frontend talks to. Optional because the pipeline itself
+# never needs it — backfill, extract and embed are all CLI.
+serve = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
 
 [dependency-groups]
 dev = [
